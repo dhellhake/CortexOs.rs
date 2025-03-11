@@ -6,10 +6,9 @@ pub(crate) static Os: OsMutex<RefCell<Option<OperatingSystem>>> = OsMutex::new(R
 #[derive(Copy, Clone, Debug)]
  pub struct Task 
  {
-    pub sp: usize,
+    pub sp: u32,
     pub cyclic: fn(u32),
-    pub status: TaskStatus,
-    pub stack: [u32; 64],
+    pub stack: [u32; 256],
  }
  
  fn empty(_tstmp: u32) {
@@ -44,8 +43,7 @@ impl OperatingSystem {
                 tasks: [Task { 
                     sp: 0,
                     cyclic: empty,
-                    status: TaskStatus::PreInit,
-                    stack: [0; 64],
+                    stack: [0; 256],
                 }; 2],
             })
         } else {

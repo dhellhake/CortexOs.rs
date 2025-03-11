@@ -1,4 +1,4 @@
-use core::cell::RefCell;
+use core::{cell::RefCell, ptr};
 use super::{CriticalSection, Mutex};
 
 pub(crate) static SCB: Mutex<RefCell<Option<SystemControlBlock>>> = Mutex::new(RefCell::new(None));
@@ -37,6 +37,13 @@ impl SystemControlBlock {
             })
         } else {
             None
+        }
+    }
+    
+    #[inline]
+    pub fn Set_PendSV(&mut self) {
+        unsafe { 
+            ptr::write_volatile(&mut self._reg.ICSR, 1 << 28)
         }
     }
 }

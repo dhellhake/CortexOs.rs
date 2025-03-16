@@ -22,5 +22,4 @@ Cargo.lock
 
 # Chip specific files
 # e.g. .svd, .cfg used for debugging
-.vscode/launch.json
 .devenv/*

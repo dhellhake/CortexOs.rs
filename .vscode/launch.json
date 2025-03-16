@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "cortex-debug",
+            "request": "launch",
+            "name": "Debug (OpenOCD)",
+            "servertype": "openocd",
+            "serverpath":"C:/Users/domin/Desktop/cache/openocd/bin/openocd.exe",
+            "cwd": "${workspaceRoot}",
+            "preLaunchTask": "Cargo Build",
+            "executable": "./target/thumbv6m-none-eabi/debug/CortexOs",
+            "configFiles": [
+                "/.devenv/ATSAMC21G18A/ATSAMC21G18A.cfg"
+            ],
+            "svdFile": "${workspaceRoot}/.devenv/ATSAMC21G18A/ATSAMC21G18A.svd"
+        }
+    ]
+}

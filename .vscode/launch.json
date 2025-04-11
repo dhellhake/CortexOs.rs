@@ -6,7 +6,7 @@
             "request": "launch",
             "name": "Debug (OpenOCD)",
             "servertype": "openocd",
-            "serverpath":"C:/Users/domin/Desktop/cache/openocd/bin/openocd.exe",
+            "serverpath":"C:/Users/domin/AppData/Roaming/xPacks/openocd/xpack-openocd-0.12.0-6/bin/openocd.exe",
             "cwd": "${workspaceRoot}",
             "preLaunchTask": "Cargo Build",
             "executable": "./target/thumbv6m-none-eabi/debug/CortexOs",

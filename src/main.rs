@@ -9,10 +9,10 @@ pub mod os;
 pub mod cortex;
 pub mod peripherals;
 
-use core::{arch::asm, ops::DerefMut, panic::PanicInfo};
+use core::{ops::DerefMut, panic::PanicInfo};
 
 use cortex::{scb::{SystemControlBlock, SCB}, systick::{SysTick, SystemTimer}};
-use os::{OperatingSystem, Os, Task};
+use os::{OperatingSystem, Os};
 use peripherals::port::{IOPinController, PORT};
 
 
@@ -69,26 +69,8 @@ fn main() -> ! {
         }
     });
 
-
-    let ctrl: u32 = 0x3;
-    let mut startTask: *const Task = (0 as *const u32) as *const Task;
-
-    unsafe {
-        asm!("msr psp, {0}", in(reg) stack);
-        asm!("msr control, {0}", in(reg) ctrl);
-        asm!("isb");
-    }
-
-    os::OsSection(|st| {
-        if let Some(ref mut os) = Os.borrow(st).borrow_mut().deref_mut() {
-            startTask = &(os.tasks[0]);
-        }
-    });
-
-
-    os::cyclic(startTask);
-
-    loop {}
+    OperatingSystem::OsStart();
+    
 }
 
 #[panic_handler]

@@ -6,6 +6,7 @@ pub mod task;
 pub mod isr;
 pub(crate) static Os: OsMutex<RefCell<Option<OperatingSystem>>> = OsMutex::new(RefCell::new(None));
 
+pub(crate) const START_TASK: usize = 0;
 pub(crate) const TASK_COUNT: usize = 2;
 pub(crate) const STACK_SIZE: usize = 256;
 
@@ -22,7 +23,7 @@ impl OperatingSystem {
 
         if result {
             Some(OperatingSystem {
-                taskIdx: 0,
+                taskIdx: START_TASK as u32,
                 tasks: [Task { 
                     sp: 0,
                     status: TaskStatus::PreInit,
@@ -39,7 +40,7 @@ impl OperatingSystem {
         let mut stack: u32 = 0;
         OsSection(|st| {
             if let Some(ref mut os) = Os.borrow(st).borrow_mut().deref_mut() {
-                stack = (&(os.tasks[0].stack[STACK_SIZE - 16]) as *const u32) as u32;
+                stack = (&(os.tasks[os.taskIdx as usize].stack[STACK_SIZE - 16]) as *const u32) as u32;
             }
         });
 
@@ -80,6 +81,43 @@ impl OperatingSystem {
         }
         self.tasks[tIdx].stack[stackIdx as usize + 14 - 6] = (&self.tasks[tIdx] as *const Task) as u32;
         self.tasks[tIdx].status = TaskStatus::Ready;
+    }
+
+    fn ContextSwitch(&mut self, curTIdx: usize, setTIdx: usize)
+    {
+        let mut t0sp: u32 = ((&self.tasks[curTIdx].sp) as *const u32) as u32;
+        let mut t1sp: u32 = ((&self.tasks[setTIdx].sp) as *const u32) as u32;
+        unsafe {
+            asm!(
+                "cpsid i",
+                "mrs	r0, psp",
+                "subs	r0, #16",
+                "stmia	r0!,{{r4-r7}}",
+                "mov	r4, r8",
+                "mov	r5, r9",
+                "mov	r6, r10",
+                "mov	r7, r11",
+                "subs	r0, #32",
+                "stmia	r0!,{{r4-r7}}",
+                "subs	r0, #16",
+                "str	r0, [r1]",
+                inout("r1") t0sp,
+            );
+
+            asm!(
+                "ldr	r0, [r1]",
+                "ldmia	r0!,{{r4-r7}}",
+                "mov	r8, r4",
+                "mov	r9, r5",
+                "mov	r10, r6",
+                "mov	r11, r7",
+                "ldmia	r0!,{{r4-r7}}",
+                "msr	psp, r0",
+                "ldr r0, =0xFFFFFFFD",
+                "cpsie	i",
+                inout("r1") t1sp,
+            );
+        }
     }
 }
 

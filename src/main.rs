@@ -12,7 +12,7 @@ pub mod peripherals;
 use core::{ops::DerefMut, panic::PanicInfo};
 
 use cortex::{scb::{SystemControlBlock, SCB}, systick::{SysTick, SystemTimer}};
-use os::{OperatingSystem, Os};
+use os::{task::TaskStatus, OperatingSystem, Os};
 use peripherals::port::{IOPinController, PORT};
 
 
@@ -48,14 +48,11 @@ fn main() -> ! {
         Os.borrow(ot).replace(Some(OperatingSystem::new().unwrap()));
     });
 
-    let mut stack: u32 = 0;
     os::OsSection(|st| {
         if let Some(ref mut os) = Os.borrow(st).borrow_mut().deref_mut() {
-            os.SetTask(0, taskone);
-            
+            os.SetTask(0, taskone);            
             os.SetTask(1, tasktwo);
-
-            stack = (&(os.tasks[0].stack[256 - 16]) as *const u32) as u32;
+            os.tasks[os.taskIdx as usize].status = TaskStatus::Active;
         }
     });
 

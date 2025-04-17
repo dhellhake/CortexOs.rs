@@ -80,7 +80,6 @@ impl OperatingSystem {
             self.tasks[tIdx].stack[stackIdx as usize + 14 - stackOffset as usize] = 0;
         }
         self.tasks[tIdx].stack[stackIdx as usize + 14 - 6] = (&self.tasks[tIdx] as *const Task) as u32;
-        self.tasks[tIdx].status = TaskStatus::Ready;
     }
 
     fn ContextSwitch(&mut self, curTIdx: usize, setTIdx: usize)

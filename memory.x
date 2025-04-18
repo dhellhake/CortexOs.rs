@@ -22,16 +22,19 @@ SECTIONS
     
     .vectors ORIGIN(rom) :
     {
+        /* Initial Stack Pointer (SP) value */
         LONG(_stack_start & 0xFFFFFFF8);
 
         /* Exception Table */
         KEEP(*(.vectors.exception_table));
+        __reset_vector = .;
 
         /* Interrupt Table */
         KEEP(*(.vectors.interrupt_table));
     } > rom
 
     
+    PROVIDE(_vect = ADDR(.vectors.exception_table));
     PROVIDE(_stext = ADDR(.vectors) + SIZEOF(.vectors));
 
     .text _stext :

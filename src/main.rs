@@ -31,23 +31,10 @@ fn tasktwo(_tstmp: u32) {
     });
 }
 
-fn main() -> ! {
-    cortex::CriticalSection(|st| {
-        SysTick.borrow(st).replace(Some(SystemTimer::new().unwrap()));
-        PORT.borrow(st).replace(Some(IOPinController::new().unwrap()));
-        SCB.borrow(st).replace(Some(SystemControlBlock::new().unwrap()));
-    });
-
-    cortex::CriticalSection(|st| {
-        if let Some(ref mut port) = PORT.borrow(st).borrow_mut().deref_mut() {
-            port.Set_PinDirection(1, 9, true);
-        }
-    });
-    
+fn main() -> ! {    
     os::OsSection(|ot| {
         Os.borrow(ot).replace(Some(OperatingSystem::new().unwrap()));
     });
-
     os::OsSection(|st| {
         if let Some(ref mut os) = Os.borrow(st).borrow_mut().deref_mut() {
             os.SetTask(0, taskone);            
@@ -55,9 +42,29 @@ fn main() -> ! {
             os.tasks[os.taskIdx as usize].status = TaskStatus::Active;
         }
     });
-
     
     cortex::CriticalSection(|st| {
+        SysTick.borrow(st).replace(Some(SystemTimer::new().unwrap()));
+        PORT.borrow(st).replace(Some(IOPinController::new().unwrap()));
+        SCB.borrow(st).replace(Some(SystemControlBlock::new().unwrap()));
+    });
+
+    
+    unsafe extern "C" {
+        unsafe static mut __reset_vector: u32;
+    }
+    unsafe {
+        cortex::CriticalSection(|st| {
+            if let Some(ref mut scb) = SCB.borrow(st).borrow_mut().deref_mut() {
+                scb.Set_VectorTableOffset(__reset_vector);
+            }
+        });
+    }
+
+    cortex::CriticalSection(|st| {
+        if let Some(ref mut port) = PORT.borrow(st).borrow_mut().deref_mut() {
+            port.Set_PinDirection(1, 9, true);
+        }
         if let Some(ref mut syst) = SysTick.borrow(st).borrow_mut().deref_mut() {
             syst.Set_ControlValue(0);
             syst.Set_ReloadValue(12345);
@@ -66,8 +73,7 @@ fn main() -> ! {
         }
     });
 
-    OperatingSystem::OsStart();
-    
+    OperatingSystem::OsStart();    
 }
 
 #[panic_handler]

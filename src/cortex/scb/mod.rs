@@ -9,6 +9,8 @@ pub struct RegisterBlock {
     pub CPUID: u32,
     /// Interrupt Control and State Register
     pub ICSR: u32,
+    /// Vector Table Offset Register
+    pub VTOR: u32,
     /// Application Interrupt and Reset Control Register
     pub AIRCR: u32,
     /// System Control Register
@@ -44,6 +46,13 @@ impl SystemControlBlock {
     pub fn Set_PendSV(&mut self) {
         unsafe { 
             ptr::write_volatile(&mut self._reg.ICSR, 1 << 28)
+        }
+    }
+    
+    #[inline]
+    pub fn Set_VectorTableOffset(&mut self, tbloff: u32) {
+        unsafe { 
+            ptr::write_volatile(&mut self._reg.VTOR, tbloff & 0xFFFFFFC0)
         }
     }
 }

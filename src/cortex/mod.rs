@@ -8,28 +8,19 @@ pub mod systick;
 pub mod nvic;
 pub mod scb;
 
-pub struct CriticalSectionToken {
-    _0: (),
-}
-
-impl CriticalSectionToken {
-    pub fn new() -> Self {
-        CriticalSectionToken { _0: () }
-    }
-}
 
 /// Execute closure `f` in an interrupt-free context.
 #[inline]
 pub fn CriticalSection<F, R>(f: F) -> R
 where
-    F: FnOnce(&CriticalSectionToken) -> R,
+    F: FnOnce() -> R,
 {
     let primask: u32;
     unsafe { asm!("MRS {0}, primask", out(reg) primask) };
     
     unsafe { asm!("cpsid i") };
 
-    let r = f(&CriticalSectionToken::new());
+    let r = f();
 
     if primask & (1 << 0) != (1 << 0) {
         unsafe { asm!("cpsie i") };
@@ -50,7 +41,7 @@ impl<T> Mutex<T> {
         }
     }
 
-    pub fn borrow<'st>(&'st self, _st: &'st CriticalSectionToken) -> &'st T {
+    pub fn borrow<'st>(&'st self) -> &'st T {
         unsafe { &*self.inner.get() }
     }
 }

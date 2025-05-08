@@ -24,7 +24,7 @@ impl NVMController {
     pub fn new() -> Option<Self> {
         let mut result: bool = true;        
         unsafe {
-            result = CriticalSection(|st | NVMCTRL.borrow(st).as_ref_unchecked().is_none());    
+            result = CriticalSection(|| NVMCTRL.borrow().as_ref_unchecked().is_none());    
         }
 
         if result {

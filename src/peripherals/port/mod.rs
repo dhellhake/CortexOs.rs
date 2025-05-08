@@ -43,7 +43,7 @@ impl IOPinController {
     pub fn new() -> Option<Self> {
         let mut result: bool = true;        
         unsafe {
-            result = CriticalSection(|st | PORT.borrow(st).as_ref_unchecked().is_none());    
+            result = CriticalSection(|| PORT.borrow().as_ref_unchecked().is_none());    
         }
 
         if result {

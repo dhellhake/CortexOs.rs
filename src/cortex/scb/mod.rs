@@ -51,7 +51,7 @@ impl SystemControlBlock {
     
     #[inline]
     pub fn Set_VectorTableOffset(&mut self, tbloff: u32) {
-        unsafe { 
+        unsafe {
             ptr::write_volatile(&mut self._reg.VTOR, tbloff & 0xFFFFFFC0)
         }
     }

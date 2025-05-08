@@ -13,7 +13,7 @@ use core::{ops::DerefMut, panic::PanicInfo};
 
 use cortex::{scb::{SystemControlBlock, SCB}, systick::{SysTick, SystemTimer}};
 use os::{task::TaskStatus, OperatingSystem, Os};
-use peripherals::port::{IOPinController, PORT};
+use peripherals::{nvmctrl::{NVMController, RWSSelect, NVMCTRL}, port::{IOPinController, PORT}};
 
 
 fn taskone(_tstmp: u32) {
@@ -47,9 +47,10 @@ fn main() -> ! {
         SysTick.borrow(st).replace(Some(SystemTimer::new().unwrap()));
         PORT.borrow(st).replace(Some(IOPinController::new().unwrap()));
         SCB.borrow(st).replace(Some(SystemControlBlock::new().unwrap()));
+        NVMCTRL.borrow(st).replace(Some(NVMController::new().unwrap()));
     });
 
-    
+
     unsafe extern "C" {
         unsafe static mut __reset_vector: u32;
     }
@@ -70,6 +71,9 @@ fn main() -> ! {
             syst.Set_ReloadValue(12345);
             syst.Set_CounterValue(0);
             syst.Set_ControlValue(7);
+        }
+        if let Some(ref mut nvmctrl) = NVMCTRL.borrow(st).borrow_mut().deref_mut() {
+            nvmctrl.Set_ReadWaitStates(RWSSelect::DUAL);
         }
     });
 

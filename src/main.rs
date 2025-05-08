@@ -50,18 +50,6 @@ fn main() -> ! {
         NVMCTRL.borrow(st).replace(Some(NVMController::new().unwrap()));
     });
 
-
-    unsafe extern "C" {
-        unsafe static mut __reset_vector: u32;
-    }
-    unsafe {
-        cortex::CriticalSection(|st| {
-            if let Some(ref mut scb) = SCB.borrow(st).borrow_mut().deref_mut() {
-                scb.Set_VectorTableOffset(__reset_vector);
-            }
-        });
-    }
-
     cortex::CriticalSection(|st| {
         if let Some(ref mut port) = PORT.borrow(st).borrow_mut().deref_mut() {
             port.Set_PinDirection(1, 9, true);

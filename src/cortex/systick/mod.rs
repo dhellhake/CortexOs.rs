@@ -1,7 +1,7 @@
-use core::{cell::RefCell, ptr};
+use core::{cell::UnsafeCell, ptr};
 use super::{CriticalSection, Mutex};
 
-pub(crate) static SysTick: Mutex<RefCell<Option<SystemTimer>>> = Mutex::new(RefCell::new(None));
+pub(crate) static SysTick: Mutex<UnsafeCell<Option<SystemTimer>>> = Mutex::new(UnsafeCell::new(None));
 
 #[repr(C)]
 pub struct RegisterBlock {
@@ -23,8 +23,11 @@ impl SystemTimer {
 
     #[inline]
     pub fn new() -> Option<Self> {
-        let result: bool = CriticalSection(|st | SysTick.borrow(st).borrow().is_none());
-
+        let mut result: bool = true;        
+        unsafe {
+            result = CriticalSection(|st | SysTick.borrow(st).as_ref_unchecked().is_none());    
+        }
+        
         if result {
             Some(SystemTimer {
                 _reg: unsafe { &mut *(0xE000E010 as *mut RegisterBlock) }

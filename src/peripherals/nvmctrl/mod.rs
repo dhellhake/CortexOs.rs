@@ -1,9 +1,9 @@
-use core::{cell::RefCell, ptr};
+use core::{cell::UnsafeCell, ptr};
 
 use crate::cortex::{CriticalSection, Mutex};
 
 
-pub(crate) static NVMCTRL: Mutex<RefCell<Option<NVMController>>> = Mutex::new(RefCell::new(None));
+pub(crate) static NVMCTRL: Mutex<UnsafeCell<Option<NVMController>>> = Mutex::new(UnsafeCell::new(None));
 
 #[repr(C)]
 pub struct RegisterBlock {
@@ -22,7 +22,10 @@ impl NVMController {
 
     #[inline]
     pub fn new() -> Option<Self> {
-        let result: bool = CriticalSection(|st| NVMCTRL.borrow(st).borrow().is_none());
+        let mut result: bool = true;        
+        unsafe {
+            result = CriticalSection(|st | NVMCTRL.borrow(st).as_ref_unchecked().is_none());    
+        }
 
         if result {
             Some(NVMController {

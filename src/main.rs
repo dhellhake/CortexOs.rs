@@ -4,6 +4,7 @@
 #![allow(dead_code)]
 #![allow(non_snake_case)]
 #![allow(unused_assignments)]
+#![feature(unsafe_cell_access)]
 
 pub mod os;
 pub mod cortex;
@@ -18,15 +19,19 @@ use peripherals::{nvmctrl::{NVMController, RWSSelect, NVMCTRL}, port::{IOPinCont
 
 fn taskone(_tstmp: u32) {
     cortex::CriticalSection(|st| {
-        if let Some(ref mut port) = PORT.borrow(st).borrow_mut().deref_mut() {
-            port.Set_PinOutState(1, 9, false);
+        unsafe {
+            if let Some(ref mut port) = PORT.borrow(st).as_mut_unchecked() {
+                port.Set_PinOutState(1, 9, false);
+            }
         }
     });
 }
 fn tasktwo(_tstmp: u32) {
     cortex::CriticalSection(|st| {
-        if let Some(ref mut port) = PORT.borrow(st).borrow_mut().deref_mut() {
-            port.Set_PinOutState(1, 9, true);
+        unsafe {            
+            if let Some(ref mut port) = PORT.borrow(st).as_mut_unchecked() {
+                port.Set_PinOutState(1, 9, true);
+            }
         }
     });
 }
@@ -44,24 +49,28 @@ fn main() -> ! {
     });
     
     cortex::CriticalSection(|st| {
-        SysTick.borrow(st).replace(Some(SystemTimer::new().unwrap()));
-        PORT.borrow(st).replace(Some(IOPinController::new().unwrap()));
-        SCB.borrow(st).replace(Some(SystemControlBlock::new().unwrap()));
-        NVMCTRL.borrow(st).replace(Some(NVMController::new().unwrap()));
+        unsafe {
+            SysTick.borrow(st).replace(Some(SystemTimer::new().unwrap()));
+            PORT.borrow(st).replace(Some(IOPinController::new().unwrap()));
+            NVMCTRL.borrow(st).replace(Some(NVMController::new().unwrap()));
+            SCB.borrow(st).replace(Some(SystemControlBlock::new().unwrap()));
+        }
     });
 
     cortex::CriticalSection(|st| {
-        if let Some(ref mut port) = PORT.borrow(st).borrow_mut().deref_mut() {
-            port.Set_PinDirection(1, 9, true);
-        }
-        if let Some(ref mut syst) = SysTick.borrow(st).borrow_mut().deref_mut() {
-            syst.Set_ControlValue(0);
-            syst.Set_ReloadValue(12345);
-            syst.Set_CounterValue(0);
-            syst.Set_ControlValue(7);
-        }
-        if let Some(ref mut nvmctrl) = NVMCTRL.borrow(st).borrow_mut().deref_mut() {
-            nvmctrl.Set_ReadWaitStates(RWSSelect::DUAL);
+        unsafe {
+            if let Some(ref mut syst) = SysTick.borrow(st).as_mut_unchecked() {
+                syst.Set_ControlValue(0);
+                syst.Set_ReloadValue(12345);
+                syst.Set_CounterValue(0);
+                syst.Set_ControlValue(7);
+            }
+            if let Some(ref mut port) = PORT.borrow(st).as_mut_unchecked() {
+                port.Set_PinDirection(1, 9, true);
+            }
+            if let Some(ref mut nvmctrl) = NVMCTRL.borrow(st).as_mut_unchecked() {
+                nvmctrl.Set_ReadWaitStates(RWSSelect::DUAL);
+            }
         }
     });
 

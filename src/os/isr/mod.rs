@@ -7,8 +7,10 @@ use super::{task::TaskStatus, Os, OsSection};
 #[no_mangle]
 pub unsafe extern "C" fn SysTick_Isr() {  
     cortex::CriticalSection(|st| {
-        if let Some(ref mut scb) = SCB.borrow(st).borrow_mut().deref_mut() {
-            scb.Set_PendSV();
+        unsafe {
+            if let Some(ref mut scb) = SCB.borrow(st).as_mut_unchecked() {
+                scb.Set_PendSV();
+            }
         }
     });
 }

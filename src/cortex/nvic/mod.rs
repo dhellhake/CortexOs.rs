@@ -1,9 +1,9 @@
 
-use core::cell::RefCell;
+use core::cell::UnsafeCell;
 
 use super::{CriticalSection, Mutex};
 
-pub(crate) static NVIC: Mutex<RefCell<Option<NestedVectoredInterruptController>>> = Mutex::new(RefCell::new(None));
+pub(crate) static NVIC: Mutex<UnsafeCell<Option<NestedVectoredInterruptController>>> = Mutex::new(UnsafeCell::new(None));
 
 #[repr(C)]
 pub struct RegisterBlock {
@@ -27,7 +27,10 @@ impl NestedVectoredInterruptController {
 
     #[inline]
     pub fn new() -> Option<Self> {
-        let result: bool = CriticalSection(|st| NVIC.borrow(st).borrow().is_none());
+        let mut result: bool = true;        
+        unsafe {
+            result = CriticalSection(|st | NVIC.borrow(st).as_ref_unchecked().is_none());    
+        }
 
         if result {
             Some(NestedVectoredInterruptController {

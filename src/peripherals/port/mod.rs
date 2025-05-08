@@ -1,9 +1,9 @@
-use core::{cell::RefCell, ptr};
+use core::{cell::UnsafeCell, ptr};
 
 use crate::cortex::{CriticalSection, Mutex};
 
 
-pub(crate) static PORT: Mutex<RefCell<Option<IOPinController>>> = Mutex::new(RefCell::new(None));
+pub(crate) static PORT: Mutex<UnsafeCell<Option<IOPinController>>> = Mutex::new(UnsafeCell::new(None));
 
 
 #[repr(C)]
@@ -41,7 +41,10 @@ impl IOPinController {
 
     #[inline]
     pub fn new() -> Option<Self> {
-        let result: bool = CriticalSection(|st| PORT.borrow(st).borrow().is_none());
+        let mut result: bool = true;        
+        unsafe {
+            result = CriticalSection(|st | PORT.borrow(st).as_ref_unchecked().is_none());    
+        }
 
         if result {
             Some(IOPinController {

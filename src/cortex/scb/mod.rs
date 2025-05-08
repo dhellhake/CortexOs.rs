@@ -1,7 +1,7 @@
-use core::{cell::RefCell, ptr};
+use core::{cell::UnsafeCell, ptr};
 use super::{CriticalSection, Mutex};
 
-pub(crate) static SCB: Mutex<RefCell<Option<SystemControlBlock>>> = Mutex::new(RefCell::new(None));
+pub(crate) static SCB: Mutex<UnsafeCell<Option<SystemControlBlock>>> = Mutex::new(UnsafeCell::new(None));
 
 #[repr(C)]
 pub struct RegisterBlock {
@@ -31,7 +31,10 @@ impl SystemControlBlock {
 
     #[inline]
     pub fn new() -> Option<Self> {
-        let result: bool = CriticalSection(|st| SCB.borrow(st).borrow().is_none());
+        let mut result: bool = true;        
+        unsafe {
+            result = CriticalSection(|st | SCB.borrow(st).as_ref_unchecked().is_none());    
+        }
 
         if result {
             Some(SystemControlBlock {

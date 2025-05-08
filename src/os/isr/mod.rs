@@ -17,8 +17,8 @@ pub unsafe extern "C" fn SysTick_Isr() {
 
 #[no_mangle]
 pub unsafe extern "C" fn PendSV() {
-    OsSection(|st| {
-        if let Some(ref mut os) = Os.borrow(st).borrow_mut().deref_mut() {
+    OsSection(|| {
+        if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
             for tIdx in 0..os.tasks.len() {
                 match os.tasks[tIdx].status {
                     TaskStatus::Finished | TaskStatus::Ready => {

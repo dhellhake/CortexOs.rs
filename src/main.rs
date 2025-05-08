@@ -37,11 +37,11 @@ fn tasktwo(_tstmp: u32) {
 }
 
 fn main() -> ! {    
-    os::OsSection(|ot| {
-        Os.borrow(ot).replace(Some(OperatingSystem::new().unwrap()));
+    os::OsSection(|| {
+        Os.borrow().replace(Some(OperatingSystem::new().unwrap()));
     });
-    os::OsSection(|st| {
-        if let Some(ref mut os) = Os.borrow(st).borrow_mut().deref_mut() {
+    os::OsSection(|| {
+        if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
             os.SetTask(0, taskone);            
             os.SetTask(1, tasktwo);
             os.tasks[os.taskIdx as usize].status = TaskStatus::Active;

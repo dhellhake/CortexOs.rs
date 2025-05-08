@@ -19,7 +19,7 @@ pub struct OperatingSystem {
 impl OperatingSystem {
     #[inline]
     pub fn new() -> Option<Self> {
-        let result: bool = OsSection(|st| Os.borrow(st).borrow().is_none());
+        let result: bool = OsSection(|| Os.borrow().borrow().is_none());
 
         if result {
             Some(OperatingSystem {
@@ -38,8 +38,8 @@ impl OperatingSystem {
     
     pub fn OsStart() -> ! {
         let mut stack: u32 = 0;
-        OsSection(|st| {
-            if let Some(ref mut os) = Os.borrow(st).borrow_mut().deref_mut() {
+        OsSection(|| {
+            if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
                 stack = (&(os.tasks[os.taskIdx as usize].stack[STACK_SIZE - 16]) as *const u32) as u32;
             }
         });
@@ -51,8 +51,8 @@ impl OperatingSystem {
         }
 
         let mut startTask: *mut Task = (0 as *const u32) as *mut Task;
-        OsSection(|st| {
-            if let Some(ref mut os) = Os.borrow(st).borrow_mut().deref_mut() {
+        OsSection(|| {
+            if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
                 startTask = &mut (os.tasks[os.taskIdx as usize]);
             }
         });
@@ -135,24 +135,13 @@ fn empty(_tstmp: u32) {
     loop {}
 }
 
-
-pub struct OsAccessToken {
-    _0: (),
-}
-
-impl OsAccessToken {
-    pub fn new() -> Self {
-        OsAccessToken { _0: () }
-    }
-}
-
 /// Execute closure `f` in an interrupt-free context.
 #[inline]
 pub fn OsSection<F, R>(f: F) -> R
 where
-    F: FnOnce(&OsAccessToken) -> R,
+    F: FnOnce() -> R,
 {
-    f(&OsAccessToken::new())
+    f()
 }
 
 pub struct OsMutex<T> {
@@ -167,7 +156,7 @@ impl<T> OsMutex<T> {
         }
     }
 
-    pub fn borrow<'st>(&'st self, _st: &'st OsAccessToken) -> &'st T {
+    pub fn borrow<'st>(&'st self) -> &'st T {
         unsafe { &*self.inner.get() }
     }
 }

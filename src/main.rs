@@ -12,9 +12,9 @@ pub mod peripherals;
 
 use core::{ops::DerefMut, panic::PanicInfo};
 
-use cortex::{scb::{SystemControlBlock, SCB}, systick::{SysTick, SystemTimer}};
+use cortex::{scb::SCB, systick::SysTick};
 use os::{task::TaskStatus, OperatingSystem, Os};
-use peripherals::{nvmctrl::{NVMController, RWSSelect, NVMCTRL}, port::{IOPinController, PORT}};
+use peripherals::{nvmctrl::NVMCTRL, port::PORT};
 
 
 fn taskone(_tstmp: u32) {
@@ -47,34 +47,16 @@ fn main() -> ! {
             os.tasks[os.taskIdx as usize].status = TaskStatus::Active;
         }
     });
-    
-    cortex::CriticalSection(|| {
-        unsafe {
-            SysTick.borrow().replace(Some(SystemTimer::new().unwrap()));
-            PORT.borrow().replace(Some(IOPinController::new().unwrap()));
-            NVMCTRL.borrow().replace(Some(NVMController::new().unwrap()));
-            SCB.borrow().replace(Some(SystemControlBlock::new().unwrap()));
-        }
-    });
 
     cortex::CriticalSection(|| {
         unsafe {
             if let Some(ref mut syst) = SysTick.borrow().as_mut_unchecked() {
-                syst.Set_ControlValue(0);
-                syst.Set_ReloadValue(12345);
-                syst.Set_CounterValue(0);
                 syst.Set_ControlValue(7);
-            }
-            if let Some(ref mut port) = PORT.borrow().as_mut_unchecked() {
-                port.Set_PinDirection(1, 9, true);
-            }
-            if let Some(ref mut nvmctrl) = NVMCTRL.borrow().as_mut_unchecked() {
-                nvmctrl.Set_ReadWaitStates(RWSSelect::DUAL);
             }
         }
     });
 
-    OperatingSystem::OsStart();    
+    OperatingSystem::OsStart();
 }
 
 #[panic_handler]

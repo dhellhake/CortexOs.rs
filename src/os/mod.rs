@@ -10,10 +10,21 @@ pub(crate) const START_TASK: usize = 0;
 pub(crate) const TASK_COUNT: usize = 2;
 pub(crate) const STACK_SIZE: usize = 256;
 
+#[derive(Copy, Clone, Debug)]
+pub enum OsStatus
+{
+	UnInit		= 0,
+	Ready		= 2,
+	Running		= 3,
+	Stopped 	= 4,
+	Unknown		= 255,
+}
+
 #[repr(C, align(4))]
 pub struct OperatingSystem {
     pub tasks: [Task; TASK_COUNT],
     pub taskIdx: u32,
+    pub osStatus: OsStatus,
 }
 
 impl OperatingSystem {
@@ -30,6 +41,7 @@ impl OperatingSystem {
                     cyclic: empty,
                     stack: [0; STACK_SIZE],
                 }; TASK_COUNT],
+                osStatus: OsStatus::UnInit,
             })
         } else {
             None
@@ -37,6 +49,7 @@ impl OperatingSystem {
     }
     
     pub fn OsStart() -> ! {
+
         let mut stack: u32 = 0;
         OsSection(|| {
             if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
@@ -54,12 +67,12 @@ impl OperatingSystem {
         OsSection(|| {
             if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
                 startTask = &mut (os.tasks[os.taskIdx as usize]);
+                os.osStatus = OsStatus::Running;
             }
         });
         
         cyclic(startTask);
     }
-
 
     #[inline]
     pub fn SetTask(&mut self, tIdx: usize, func: fn(u32)) {
@@ -122,12 +135,10 @@ impl OperatingSystem {
 
 
 fn cyclic(task: *mut Task) -> ! {
-
     unsafe {
         ((*task).cyclic)(123);
         (*task).status = TaskStatus::Finished;
     }
-
     loop { }
 }
 

@@ -4,7 +4,7 @@
 
 use core::ptr;
 
-use crate::main;
+use crate::{cortex::{self, scb::SystemControlBlock, systick::SystemTimer}, main, peripherals::{nvmctrl::{NVMController, RWSSelect}, port::IOPinController}, SysTick, NVMCTRL, PORT, SCB};
 
 extern "C" {
 
@@ -69,6 +69,32 @@ pub unsafe extern "C" fn Reset() {
 
         ptr::write_bytes(start_addr as *mut u32, 0, relocate_size);
     }
+    
+    cortex::CriticalSection(|| {
+        unsafe {
+            SysTick.borrow().replace(Some(SystemTimer::new().unwrap()));
+            PORT.borrow().replace(Some(IOPinController::new().unwrap()));
+            NVMCTRL.borrow().replace(Some(NVMController::new().unwrap()));
+            SCB.borrow().replace(Some(SystemControlBlock::new().unwrap()));
+        }
+    });
+    
+
+    cortex::CriticalSection(|| {
+        unsafe {
+            if let Some(ref mut syst) = SysTick.borrow().as_mut_unchecked() {
+                syst.Set_ControlValue(0);
+                syst.Set_ReloadValue(12345);
+                syst.Set_CounterValue(0);
+            }
+            if let Some(ref mut port) = PORT.borrow().as_mut_unchecked() {
+                port.Set_PinDirection(1, 9, true);
+            }
+            if let Some(ref mut nvmctrl) = NVMCTRL.borrow().as_mut_unchecked() {
+                nvmctrl.Set_ReadWaitStates(RWSSelect::DUAL);
+            }
+        }
+    });
 
     main();
 }

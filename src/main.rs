@@ -12,9 +12,8 @@ pub mod peripherals;
 
 use core::{ops::DerefMut, panic::PanicInfo};
 
-use cortex::{scb::SCB, systick::SysTick};
 use os::{task::TaskStatus, OperatingSystem, Os};
-use peripherals::{nvmctrl::NVMCTRL, port::PORT};
+use peripherals::{nvmctrl::NVMCTRL, port::PORT, systick::SysTick};
 
 
 fn taskone(_tstmp: u32) {

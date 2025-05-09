@@ -4,7 +4,7 @@
 
 use core::ptr;
 
-use crate::{cortex::{self, scb::SystemControlBlock, systick::SystemTimer}, main, peripherals::{nvmctrl::{NVMController, RWSSelect}, port::IOPinController}, SysTick, NVMCTRL, PORT, SCB};
+use crate::{cortex::{self}, main, peripherals::{nvmctrl::{NVMController, RWSSelect}, port::IOPinController, scb::{SystemControlBlock, SCB}, systick::SystemTimer}, SysTick, NVMCTRL, PORT};
 
 extern "C" {
 

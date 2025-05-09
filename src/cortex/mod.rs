@@ -4,10 +4,6 @@
 use core::{arch::asm, cell::UnsafeCell};
 
 pub mod startup;
-pub mod systick;
-pub mod nvic;
-pub mod scb;
-
 
 /// Execute closure `f` in an interrupt-free context.
 #[inline]

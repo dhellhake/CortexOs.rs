@@ -1,6 +1,6 @@
 use core::ops::DerefMut;
 
-use crate::{cortex, SCB};
+use crate::{cortex, peripherals::scb::SCB};
 
 use super::{task::TaskStatus, Os, OsSection, OsStatus};
 

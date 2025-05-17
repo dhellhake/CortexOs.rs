@@ -17,7 +17,7 @@ use peripherals::{nvmctrl::NVMCTRL, port::PORT, systick::SysTick};
 
 #[unsafe(link_section = ".ramfunc")]
 fn taskone(_tstmp: u32) {
-    cortex::CriticalSection(|| {
+    cortex::CriticalSection(#[inline(always)] || {
         unsafe {
             if let Some(ref mut port) = PORT.borrow().as_mut_unchecked() {
                 port.Set_PinOutState(1, 9, false);
@@ -29,7 +29,7 @@ fn taskone(_tstmp: u32) {
 
 #[unsafe(link_section = ".ramfunc")]
 fn tasktwo(_tstmp: u32) {
-    cortex::CriticalSection(|| {
+    cortex::CriticalSection(#[inline(always)] || {
         unsafe {            
             if let Some(ref mut port) = PORT.borrow().as_mut_unchecked() {
                 port.Set_PinOutState(1, 9, true);

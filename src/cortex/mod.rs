@@ -7,6 +7,7 @@ pub mod startup;
 
 /// Execute closure `f` in an interrupt-free context.
 #[inline]
+#[unsafe(link_section = ".ramfunc")]
 pub fn CriticalSection<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,

@@ -15,7 +15,7 @@ use core::{ops::DerefMut, panic::PanicInfo};
 use os::{task::TaskStatus, OperatingSystem, Os};
 use peripherals::{nvmctrl::NVMCTRL, port::PORT, systick::SysTick};
 
-
+#[unsafe(link_section = ".ramfunc")]
 fn taskone(_tstmp: u32) {
     cortex::CriticalSection(|| {
         unsafe {
@@ -25,6 +25,9 @@ fn taskone(_tstmp: u32) {
         }
     });
 }
+
+
+#[unsafe(link_section = ".ramfunc")]
 fn tasktwo(_tstmp: u32) {
     cortex::CriticalSection(|| {
         unsafe {            
@@ -50,7 +53,7 @@ fn main() -> ! {
     cortex::CriticalSection(|| {
         unsafe {
             if let Some(ref mut syst) = SysTick.borrow().as_mut_unchecked() {
-                syst.Set_ControlValue(7);
+                syst.WriteRaw_ControlAndStatusRegister(7);
             }
         }
     });

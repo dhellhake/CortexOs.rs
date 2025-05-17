@@ -4,7 +4,7 @@
 
 use core::ptr;
 
-use crate::{cortex::{self}, main, peripherals::{nvmctrl::{NVMController, RWSSelect}, port::IOPinController, scb::{SystemControlBlock, SCB}, systick::SystemTimer}, SysTick, NVMCTRL, PORT};
+use crate::{cortex::{self}, main, peripherals::{gclk::{GenericClockGenerator, GCLK}, nvmctrl::{NVMController, RWSSelect}, port::IOPinController, scb::{SystemControlBlock, SCB}, systick::SystemTimer}, SysTick, NVMCTRL, PORT};
 
 extern "C" {
 
@@ -58,8 +58,11 @@ pub static __exception_table: [Vector; 15] = [
 pub unsafe extern "C" fn Reset() {
     
     unsafe extern "C" {
+        unsafe static mut _etext: u32;
         unsafe static mut _szero: u32;
         unsafe static mut _ezero: u32;
+        unsafe static mut _srelocate: u32;
+        unsafe static mut _erelocate: u32;
     }
 
     unsafe {
@@ -70,12 +73,23 @@ pub unsafe extern "C" fn Reset() {
         ptr::write_bytes(start_addr as *mut u32, 0, relocate_size);
     }
     
+
+    unsafe {
+        let etext: *const u32 = &_etext as *const u32;
+        let start_relocate: *const u32 = &_srelocate as *const u32;
+        let end_relocate: *const u32 = &_erelocate as *const u32;
+        let relocate_size: usize = end_relocate as usize - start_relocate as usize;
+
+        ptr::copy_nonoverlapping(etext, start_relocate as *mut u32, relocate_size / 4);
+    }
+
     cortex::CriticalSection(|| {
         unsafe {
             SysTick.borrow().replace(Some(SystemTimer::new().unwrap()));
             PORT.borrow().replace(Some(IOPinController::new().unwrap()));
             NVMCTRL.borrow().replace(Some(NVMController::new().unwrap()));
             SCB.borrow().replace(Some(SystemControlBlock::new().unwrap()));
+            GCLK.borrow().replace(Some(GenericClockGenerator::new().unwrap()));
         }
     });
     
@@ -83,15 +97,18 @@ pub unsafe extern "C" fn Reset() {
     cortex::CriticalSection(|| {
         unsafe {
             if let Some(ref mut syst) = SysTick.borrow().as_mut_unchecked() {
-                syst.Set_ControlValue(0);
-                syst.Set_ReloadValue(12345);
-                syst.Set_CounterValue(0);
+                syst.WriteRaw_ControlAndStatusRegister(0);
+                syst.WriteRaw_ReloadValueRegister(12345);
+                syst.WriteRaw_CurrentValueRegister(0);
             }
             if let Some(ref mut port) = PORT.borrow().as_mut_unchecked() {
                 port.Set_PinDirection(1, 9, true);
             }
             if let Some(ref mut nvmctrl) = NVMCTRL.borrow().as_mut_unchecked() {
                 nvmctrl.Set_ReadWaitStates(RWSSelect::DUAL);
+            }
+            if let Some(ref mut gclk) = GCLK.borrow().as_mut_unchecked() {
+                gclk.WriteRaw_Control(1);
             }
         }
     });

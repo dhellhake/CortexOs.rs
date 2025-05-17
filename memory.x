@@ -56,6 +56,16 @@ SECTIONS
     . = ALIGN(4);
     _etext = .;
 
+    .relocate : AT (_etext)
+    {
+        . = ALIGN(4);
+        _srelocate = .;
+        *(.ramfunc .ramfunc.*);
+        *(.data .data.*);
+        . = ALIGN(4);
+        _erelocate = .;
+    } > ram
+
     .bss (NOLOAD) :
     {
         . = ALIGN(4);

@@ -47,16 +47,12 @@ impl SystemControlBlock {
     }
     
     #[inline]
-    pub fn Set_PendSV(&mut self) {
-        unsafe { 
-            ptr::write_volatile(&mut self._reg.ICSR, 1 << 28)
-        }
+    pub unsafe fn Set_PendSV(&mut self) {
+        ptr::write_volatile(&mut self._reg.ICSR, 1 << 28)
     }
     
     #[inline]
-    pub fn Set_VectorTableOffset(&mut self, tbloff: u32) {
-        unsafe {
-            ptr::write_volatile(&mut self._reg.VTOR, tbloff & 0xFFFFFFC0)
-        }
+    pub unsafe fn Set_VectorTableOffset(&mut self, tbloff: u32) {
+        ptr::write_volatile(&mut self._reg.VTOR, tbloff & 0xFFFFFFC0)
     }
 }

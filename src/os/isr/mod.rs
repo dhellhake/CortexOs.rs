@@ -5,6 +5,7 @@ use crate::{cortex, peripherals::scb::SCB};
 use super::{task::TaskStatus, Os, OsSection, OsStatus};
 
 #[no_mangle]
+#[unsafe(link_section = ".ramfunc")]
 pub unsafe extern "C" fn SysTick_Isr() {  
     cortex::CriticalSection(|| {
         unsafe {
@@ -16,6 +17,7 @@ pub unsafe extern "C" fn SysTick_Isr() {
 }
 
 #[no_mangle]
+#[unsafe(link_section = ".ramfunc")]
 pub unsafe extern "C" fn PendSV() {
     OsSection(|| {
         if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {

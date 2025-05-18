@@ -86,13 +86,10 @@ impl OperatingSystem {
 
     #[inline]
     pub fn ResetTask(&mut self, tIdx: usize) {
-        let stackIdx = (STACK_SIZE as u32 - 1) - ((((&self.tasks[tIdx].stack[STACK_SIZE - 1]) as *const u32) as u32) - self.tasks[tIdx].sp) / 4;
-
-        self.tasks[tIdx].stack[stackIdx as usize + 14] = (cyclic as *const ()) as u32;
-        for stackOffset in 1..6 {
-            self.tasks[tIdx].stack[stackIdx as usize + 14 - stackOffset as usize] = 0;
-        }
-        self.tasks[tIdx].stack[stackIdx as usize + 14 - 6] = (&self.tasks[tIdx] as *const Task) as u32;
+        self.tasks[tIdx].sp = ((&self.tasks[tIdx].stack[STACK_SIZE - 16]) as *const u32) as u32;
+        self.tasks[tIdx].stack[STACK_SIZE - 1] = 0x01000000;
+        self.tasks[tIdx].stack[STACK_SIZE - 2] = (cyclic as *const ()) as u32;
+        self.tasks[tIdx].stack[STACK_SIZE - 8] = ((self.tasks.as_ptr() as usize) + (mem::size_of::<Task>() * tIdx)) as u32;
     }
 
     fn ContextSwitch(&mut self, curTIdx: usize, setTIdx: usize)

@@ -4,7 +4,7 @@
 
 use core::ptr;
 
-use crate::{cortex::{self}, main, peripherals::{gclk::{GenericClockGenerator, GCLK}, nvmctrl::{NVMController, RWSSelect}, port::IOPinController, scb::{SystemControlBlock, SCB}, systick::SystemTimer}, SysTick, NVMCTRL, PORT};
+use crate::{cortex::{self}, main, peripherals::{gclk::{GenericClockGenerator, GCLK, GCLK_GENCTRL__DIVSEL, GCLK_GENCTRL__SRC, GCLK_PCHCTRL__GEN, GENCTRL}, mclk::{MainClock, MCLK}, nvmctrl::{NVMController, RWSSelect}, oscctrl::{OscillatorsControl, DPLLCTRLA, DPLLCTRLB, DPLLRATIO, OSCCTRL, OSCCTRL_DPLLCTRLB__FILTER, OSCCTRL_DPLLCTRLB__LTIME, OSCCTRL_DPLLCTRLB__REFCLK, OSCCTRL_DPLLPRESC__PRESC, OSCCTRL_OSC48MDIV__DIV}, port::IOPinController, scb::{SystemControlBlock, SCB}, systick::SystemTimer}, SysTick, NVMCTRL, PORT};
 
 extern "C" {
 
@@ -90,26 +90,109 @@ pub unsafe extern "C" fn Reset() {
             NVMCTRL.borrow().replace(Some(NVMController::new().unwrap()));
             SCB.borrow().replace(Some(SystemControlBlock::new().unwrap()));
             GCLK.borrow().replace(Some(GenericClockGenerator::new().unwrap()));
+            OSCCTRL.borrow().replace(Some(OscillatorsControl::new().unwrap()));
+            MCLK.borrow().replace(Some(MainClock::new().unwrap()));
         }
-    });
-    
+    });   
 
     cortex::CriticalSection(|| {
         unsafe {
-            if let Some(ref mut syst) = SysTick.borrow().as_mut_unchecked() {
-                syst.WriteRaw_ControlAndStatusRegister(0);
-                syst.WriteRaw_ReloadValueRegister(12345);
-                syst.WriteRaw_CurrentValueRegister(0);
-            }
-            if let Some(ref mut port) = PORT.borrow().as_mut_unchecked() {
-                port.Set_PinDirection(1, 9, true);
-            }
-            if let Some(ref mut nvmctrl) = NVMCTRL.borrow().as_mut_unchecked() {
-                nvmctrl.Set_ReadWaitStates(RWSSelect::DUAL);
-            }
-            if let Some(ref mut gclk) = GCLK.borrow().as_mut_unchecked() {
-                gclk.WriteRaw_Control(1);
-            }
+            let gclk = GCLK.borrow().as_mut_unchecked().as_mut().unwrap();
+            let syst = SysTick.borrow().as_mut_unchecked().as_mut().unwrap();
+            let port = PORT.borrow().as_mut_unchecked().as_mut().unwrap();
+            let nvmctrl = NVMCTRL.borrow().as_mut_unchecked().as_mut().unwrap();
+            let oscctrl = OSCCTRL.borrow().as_mut_unchecked().as_mut().unwrap();
+
+            syst.WriteRaw_ControlAndStatusRegister(0);
+            syst.WriteRaw_ReloadValueRegister(64618);
+            syst.WriteRaw_CurrentValueRegister(0);
+
+            port.Set_PinDirection(1, 9, true);
+            
+            nvmctrl.Set_ReadWaitStates(RWSSelect::DUAL);
+            
+            oscctrl.Set_OSC48MDIV_DIV(OSCCTRL_OSC48MDIV__DIV::DIV1);
+            while oscctrl.ReadRaw_Osc48mSynchronizationBusy() != 0 {}
+
+            // Set ClockGenerator 1 to 1Mhz (48Mhz / 48)
+            gclk.Write_GenericClockGeneratorControl(1, GENCTRL {
+                    SRC: GCLK_GENCTRL__SRC::OSC48M,
+                    GENEN: 1,
+                    IDC: 1,
+                    OOV: 0,
+                    OE: 0,
+                    DIVSEL: GCLK_GENCTRL__DIVSEL::DIV1,
+                    RUNSTDBY: 0,
+                    DIV: 48,
+                });
+            
+            // Set ClockGenerator 2 to 32kHz (32kHz / 1)
+            gclk.Write_GenericClockGeneratorControl(2, GENCTRL {
+                    SRC: GCLK_GENCTRL__SRC::OSCULP32K,
+                    GENEN: 1,
+                    IDC: 1,
+                    OOV: 0,
+                    OE: 0,
+                    DIVSEL: GCLK_GENCTRL__DIVSEL::DIV1,
+                    RUNSTDBY: 0,
+                    DIV: 1,
+                });
+
+            // Enable Clock Generation for FDPLL (GCLK_ID 0)
+            gclk.Set_PCHCTRL_CHEN(0, 0);                            // Disable Channel for GCLK_DPLL 
+            gclk.Set_PCHCTRL_GEN(0, GCLK_PCHCTRL__GEN::GCLK1);      // Set Channel Clock Generator to GCLK1
+            gclk.Set_PCHCTRL_CHEN(0, 1);                            // Disable Channel for GCLK_DPLL 
+
+            // Enable Clock Generation for FDPLL32K (GCLK_ID 1)
+            gclk.Set_PCHCTRL_CHEN(1, 0);                            // Disable Channel for GCLK_DPLL 
+            gclk.Set_PCHCTRL_GEN(1, GCLK_PCHCTRL__GEN::GCLK2);      // Set Channel Clock Generator to GCLK2
+            gclk.Set_PCHCTRL_CHEN(1, 1);                            // Disable Channel for GCLK_DPLL 
+            
+            // Set DPLL Reference Clock to GCLK (1Mhz)
+            oscctrl.Write_DigitalCoreConfiguration(DPLLCTRLB {
+                DIV: 0,
+                LBYPASS: 0,
+                LTIME: OSCCTRL_DPLLCTRLB__LTIME::DEFAULT,
+                REFCLK: OSCCTRL_DPLLCTRLB__REFCLK::GCLK,
+                WUF: 0,
+                LPEN: 0,
+                FILTER: OSCCTRL_DPLLCTRLB__FILTER::DEFAULT,
+            });
+
+            // Set DPLL Clock Multiplier to 128 (128 Mhz)
+            oscctrl.Write_DpllRatioControl(DPLLRATIO {
+                LDR: 128,
+                LDRFRAC: 0,
+            });
+            while (oscctrl.ReadRaw_DpllSynchronizationBusy() & 0b0100 ) != 0 {}
+            
+            // Set DPLL Clock Prescaler to 1 (128 Mhz)
+            oscctrl.Set_DPLLPRESC_PRESC(OSCCTRL_DPLLPRESC__PRESC::DIV2);
+            while (oscctrl.ReadRaw_DpllSynchronizationBusy() & 0b1000 ) != 0 {}
+
+            // Enable DPLL
+            oscctrl.Write_DpllControl(DPLLCTRLA {
+                ONDEMAND: 0,
+                RUNSTDBY: 0,
+                ENABLE: 1,
+            });
+            while (oscctrl.ReadRaw_DpllSynchronizationBusy() & 0b0010 ) != 0 {}
+
+            // Wait for DPLL Frequency to stabilize
+            while (oscctrl.ReadRaw_DpllStatus() & 0b1 ) != 1 {}
+            
+            // Set ClockGenerator 0 to 64Mhz
+            gclk.Write_GenericClockGeneratorControl(0, GENCTRL {
+                    SRC: GCLK_GENCTRL__SRC::DPLL96M,
+                    GENEN: 1,
+                    IDC: 1,
+                    OOV: 0,
+                    OE: 0,
+                    DIVSEL: GCLK_GENCTRL__DIVSEL::DIV1,
+                    RUNSTDBY: 0,
+                    DIV: 1,
+                });
+
         }
     });
 

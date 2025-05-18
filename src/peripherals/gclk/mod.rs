@@ -10,13 +10,13 @@ pub(crate) static GCLK: Mutex<UnsafeCell<Option<GenericClockGenerator>>> = Mutex
 pub struct RegisterGroup {
     // Control
     pub CTRLA: u8,
-    pub res0: [u8; 4],
+    pub res0: [u8; 3],
     // Synchronization Busy
     pub SYNCBUSY: u32,
-    pub res1: [u8; 28],
+    pub res1: [u8; 24],
     // Generic Clock Generator Control
     pub GENCTRL: [u32; 9],
-    pub res2: [u8; 96],
+    pub res2: [u8; 60],
     // Peripheral Clock Control
     pub PCHCTRL: [u32; 41],
 }
@@ -42,6 +42,9 @@ impl GenericClockGenerator {
         }
     }
 
+    // --------------------------------------------------
+    // Raw Register Access
+    // --------------------------------------------------
     #[inline]
     pub unsafe fn WriteRaw_Control(&mut self, regVal: u8) {
         ptr::write_volatile(&mut self._reg.CTRLA, regVal)
@@ -52,18 +55,9 @@ impl GenericClockGenerator {
     }
 
     #[inline]
-    pub fn Set_CTRLA_SWRST(&mut self, val: u8) {
-        unsafe {
-            let regVal = ptr::read_volatile(&self._reg.CTRLA) & !(0x1);
-            ptr::write_volatile(&mut self._reg.CTRLA, ((val as u8) << 0) | regVal)
-        }
-    }
-
-    #[inline]
     pub unsafe fn ReadRaw_SynchronizationBusy(&mut self) -> u32 {
         ptr::read_volatile(&mut self._reg.SYNCBUSY)
     }
-
 
     #[inline]
     pub unsafe fn WriteRaw_GenericClockGeneratorControl(&mut self, regIdx: usize, regVal: u32) {
@@ -73,6 +67,60 @@ impl GenericClockGenerator {
     pub unsafe fn ReadRaw_GenericClockGeneratorControl(&mut self, regIdx: usize) -> u32 {
         ptr::read_volatile(&mut self._reg.GENCTRL[regIdx])
     }
+
+    #[inline]
+    pub unsafe fn WriteRaw_PeripheralClockControl(&mut self, regIdx: usize, regVal: u32) {
+        ptr::write_volatile(&mut self._reg.PCHCTRL[regIdx], regVal)
+    }
+    #[inline]
+    pub unsafe fn ReadRaw_PeripheralClockControl(&mut self, regIdx: usize) -> u32 {
+        ptr::read_volatile(&mut self._reg.PCHCTRL[regIdx])
+    }
+
+    // --------------------------------------------------
+
+
+    // --------------------------------------------------
+    // Typed Register Access
+    // --------------------------------------------------
+
+    #[inline]
+    pub unsafe fn Write_GenericClockGeneratorControl(&mut self, regIdx: usize, regVal: GENCTRL) {
+        let mut rawVal: u32 = 0;
+        rawVal |= (((regVal.SRC as u32) << 0) & 0x7) as u32;
+        rawVal |= (((regVal.GENEN as u32) << 8) & 0x100) as u32;
+        rawVal |= (((regVal.IDC as u32) << 9) & 0x200) as u32;
+        rawVal |= (((regVal.OOV as u32) << 10) & 0x400) as u32;
+        rawVal |= (((regVal.OE as u32) << 11) & 0x800) as u32;
+        rawVal |= (((regVal.DIVSEL as u32) << 12) & 0x1000) as u32;
+        rawVal |= (((regVal.RUNSTDBY as u32) << 13) & 0x2000) as u32;
+        rawVal |= (((regVal.DIV as u32) << 16) & 0xFFFF0000) as u32;
+        ptr::write_volatile(&mut self._reg.GENCTRL[regIdx], rawVal)
+    }
+
+    #[inline]
+    pub unsafe fn Write_PeripheralClockControl(&mut self, regIdx: usize, regVal: PCHCTRL) {
+        let mut rawVal: u32 = 0;
+        rawVal |= (((regVal.GEN as u32) << 0) & 0xF) as u32;
+        rawVal |= (((regVal.CHEN as u32) << 6) & 0x40) as u32;
+        rawVal |= (((regVal.WRTLOCK as u32) << 7) & 0x80) as u32;
+        ptr::write_volatile(&mut self._reg.PCHCTRL[regIdx], rawVal)
+    }
+
+    // --------------------------------------------------
+
+
+    // --------------------------------------------------
+    // Register BitField Access
+    // --------------------------------------------------
+    #[inline]
+    pub fn Set_CTRLA_SWRST(&mut self, val: u8) {
+        unsafe {
+            let regVal = ptr::read_volatile(&self._reg.CTRLA) & !(0x1);
+            ptr::write_volatile(&mut self._reg.CTRLA, ((val as u8) << 0) | regVal)
+        }
+    }
+
 
     #[inline]
     pub fn Set_GENCTRL_SRC(&mut self, regIdx: usize, val: GCLK_GENCTRL__SRC) {
@@ -132,15 +180,6 @@ impl GenericClockGenerator {
     }
 
     #[inline]
-    pub unsafe fn WriteRaw_PeripheralClockControl(&mut self, regIdx: usize, regVal: u32) {
-        ptr::write_volatile(&mut self._reg.PCHCTRL[regIdx], regVal)
-    }
-    #[inline]
-    pub unsafe fn ReadRaw_PeripheralClockControl(&mut self, regIdx: usize) -> u32 {
-        ptr::read_volatile(&mut self._reg.PCHCTRL[regIdx])
-    }
-
-    #[inline]
     pub fn Set_PCHCTRL_GEN(&mut self, regIdx: usize, val: GCLK_PCHCTRL__GEN) {
         unsafe {
             let regVal = ptr::read_volatile(&self._reg.PCHCTRL[regIdx]) & !(0xF);
@@ -150,8 +189,8 @@ impl GenericClockGenerator {
     #[inline]
     pub fn Set_PCHCTRL_CHEN(&mut self, regIdx: usize, val: u32) {
         unsafe {
-            let regVal = ptr::read_volatile(&self._reg.PCHCTRL[regIdx]) & !(0x40);
-            ptr::write_volatile(&mut self._reg.PCHCTRL[regIdx], ((val as u32) << 6) | regVal)
+            let regVal = (ptr::read_volatile(&self._reg.PCHCTRL[regIdx]) & !(0x40)) | ((val as u32) << 6);
+            ptr::write_volatile(&mut self._reg.PCHCTRL[regIdx], regVal)
         }
     }
     #[inline]
@@ -162,7 +201,46 @@ impl GenericClockGenerator {
         }
     }
 
+    // --------------------------------------------------
+
+
 }
+
+// --------------------------------------------------
+// Register Type Definition
+// --------------------------------------------------
+pub struct SYNCBUSY {
+    pub SWRST: u8,
+    pub GENCTRL0: GCLK_SYNCBUSY__GENCTRL,
+    pub GENCTRL1: GCLK_SYNCBUSY__GENCTRL,
+    pub GENCTRL2: GCLK_SYNCBUSY__GENCTRL,
+    pub GENCTRL3: GCLK_SYNCBUSY__GENCTRL,
+    pub GENCTRL4: GCLK_SYNCBUSY__GENCTRL,
+    pub GENCTRL5: GCLK_SYNCBUSY__GENCTRL,
+    pub GENCTRL6: GCLK_SYNCBUSY__GENCTRL,
+    pub GENCTRL7: GCLK_SYNCBUSY__GENCTRL,
+    pub GENCTRL8: GCLK_SYNCBUSY__GENCTRL,
+}
+
+pub struct GENCTRL {
+    pub SRC: GCLK_GENCTRL__SRC,
+    pub GENEN: u8,
+    pub IDC: u8,
+    pub OOV: u8,
+    pub OE: u8,
+    pub DIVSEL: GCLK_GENCTRL__DIVSEL,
+    pub RUNSTDBY: u8,
+    pub DIV: u16,
+}
+
+pub struct PCHCTRL {
+    pub GEN: GCLK_PCHCTRL__GEN,
+    pub CHEN: u8,
+    pub WRTLOCK: u8,
+}
+
+// --------------------------------------------------
+
 
 pub enum GCLK_SYNCBUSY__GENCTRL {
     GCLK0 = 1,                                      //Generic clock generator 0

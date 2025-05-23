@@ -27,6 +27,20 @@ pub unsafe extern "C" fn PendSV() {
             {
                 for tIdx in 0..os.tasks.len() {
                     match os.tasks[tIdx].status {
+                        TaskStatus::Finished => {            
+                            if tIdx != os.taskIdx as usize {         
+                                if os.elapsedMillis % (os.tasks[tIdx].cycletime as u64) == 0 {
+                                    os.ResetTask(tIdx);
+                                    os.tasks[tIdx].status = TaskStatus::Ready;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                
+                for tIdx in 0..os.tasks.len() {
+                    match os.tasks[tIdx].status {
                         TaskStatus::Active => {
                             break;
                         }
@@ -44,20 +58,6 @@ pub unsafe extern "C" fn PendSV() {
                                 os.tasks[tIdx].status = TaskStatus::Active;
                                 os.taskIdx = tIdx as u32;
                                 break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                for tIdx in 0..os.tasks.len() {
-                    match os.tasks[tIdx].status {
-                        TaskStatus::Finished => {            
-                            if tIdx != os.taskIdx as usize {         
-                                if os.elapsedMillis % (os.tasks[tIdx].cycletime as u64) == 0 {
-                                    os.ResetTask(tIdx);
-                                    os.tasks[tIdx].status = TaskStatus::Ready;
-                                }
                             }
                         }
                         _ => {}

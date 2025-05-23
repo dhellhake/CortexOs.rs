@@ -1,13 +1,12 @@
 use core::{arch::asm, cell::{RefCell, UnsafeCell}, mem, ops::DerefMut};
 
-use task::{Task, TaskStatus};
+use task::{Task, TaskCycleTime, TaskStatus};
 
 pub mod task;
 pub mod isr;
 pub(crate) static Os: OsMutex<RefCell<Option<OperatingSystem>>> = OsMutex::new(RefCell::new(None));
 
-pub(crate) const START_TASK: usize = 0;
-pub(crate) const TASK_COUNT: usize = 2;
+pub(crate) const TASK_COUNT: usize = 3;
 pub(crate) const STACK_SIZE: usize = 256;
 
 #[derive(Copy, Clone, Debug)]
@@ -25,6 +24,7 @@ pub struct OperatingSystem {
     pub tasks: [Task; TASK_COUNT],
     pub taskIdx: u32,
     pub osStatus: OsStatus,
+    pub elapsedMillis: u64,
 }
 
 impl OperatingSystem {
@@ -34,14 +34,16 @@ impl OperatingSystem {
 
         if result {
             Some(OperatingSystem {
-                taskIdx: START_TASK as u32,
+                taskIdx: (TASK_COUNT - 1) as u32,
                 tasks: [Task { 
                     sp: 0,
                     status: TaskStatus::PreInit,
+                    cycletime: TaskCycleTime::NonCyclic,
                     cyclic: empty,
                     stack: [0; STACK_SIZE],
                 }; TASK_COUNT],
                 osStatus: OsStatus::UnInit,
+                elapsedMillis: 0,
             })
         } else {
             None
@@ -75,8 +77,9 @@ impl OperatingSystem {
     }
 
     #[inline]
-    pub fn SetTask(&mut self, tIdx: usize, func: fn(u32)) {
+    pub fn SetTask(&mut self, tIdx: usize, func: fn(u32), cycletime: TaskCycleTime) {
         self.tasks[tIdx].cyclic = func;
+        self.tasks[tIdx].cycletime = cycletime;
         self.tasks[tIdx].sp = ((&self.tasks[tIdx].stack[STACK_SIZE - 16]) as *const u32) as u32;
         self.tasks[tIdx].stack[STACK_SIZE - 1] = 0x01000000;
         self.tasks[tIdx].stack[STACK_SIZE - 2] = (cyclic as *const ()) as u32;

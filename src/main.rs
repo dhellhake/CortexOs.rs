@@ -12,7 +12,7 @@ pub mod peripherals;
 
 use core::{ops::DerefMut, panic::PanicInfo};
 
-use os::{task::TaskStatus, OperatingSystem, Os};
+use os::{task::{TaskCycleTime, TaskStatus}, OperatingSystem, Os};
 use peripherals::{nvmctrl::NVMCTRL, port::PORT, systick::SysTick};
 
 #[unsafe(link_section = ".ramfunc")]
@@ -20,7 +20,7 @@ fn taskone(_tstmp: u32) {
     cortex::CriticalSection(#[inline(always)] || {
         unsafe {
             if let Some(ref mut port) = PORT.borrow().as_mut_unchecked() {
-                port.Set_PinOutState(1, 9, false);
+                port.Set_PinOutState(1, 9, true);
             }
         }
     });
@@ -32,10 +32,14 @@ fn tasktwo(_tstmp: u32) {
     cortex::CriticalSection(#[inline(always)] || {
         unsafe {            
             if let Some(ref mut port) = PORT.borrow().as_mut_unchecked() {
-                port.Set_PinOutState(1, 9, true);
+                port.Set_PinOutState(1, 9, false);
             }
         }
     });
+}
+
+fn background(_tstmp: u32) {
+    loop {}
 }
 
 fn main() -> ! {    
@@ -44,8 +48,9 @@ fn main() -> ! {
     });
     os::OsSection(|| {
         if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
-            os.SetTask(0, taskone);            
-            os.SetTask(1, tasktwo);
+            os.SetTask(0, taskone, TaskCycleTime::_5MS);
+            os.SetTask(1, tasktwo, TaskCycleTime::_5MS);
+            os.SetTask(2, background, TaskCycleTime::NonCyclic);
             os.tasks[os.taskIdx as usize].status = TaskStatus::Active;
         }
     });

@@ -43,18 +43,14 @@ fn background(_tstmp: u32) {
 }
 
 fn main() -> ! {    
-    os::OsSection(|| {
-        Os.borrow().replace(Some(OperatingSystem::new().unwrap()));
-    });
-    os::OsSection(|| {
-        if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
-            os.SetTask(0, taskone, TaskCycleTime::_5MS);
-            os.SetTask(1, tasktwo, TaskCycleTime::_5MS);
-            os.SetTask(2, background, TaskCycleTime::NonCyclic);
-            os.tasks[os.taskIdx as usize].status = TaskStatus::Active;
-        }
-    });
-
+    Os.borrow().replace(Some(OperatingSystem::new().unwrap()));
+    if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
+        os.SetTask(0, taskone, TaskCycleTime::_5MS);
+        os.SetTask(1, tasktwo, TaskCycleTime::_5MS);
+        os.SetTask(2, background, TaskCycleTime::NonCyclic);
+        os.tasks[os.taskIdx as usize].status = TaskStatus::Active;
+    }
+    
     cortex::CriticalSection(|| {
         unsafe {
             if let Some(ref mut syst) = SysTick.borrow().as_mut_unchecked() {

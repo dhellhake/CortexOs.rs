@@ -30,7 +30,7 @@ pub struct OperatingSystem {
 impl OperatingSystem {
     #[inline]
     pub fn new() -> Option<Self> {
-        let result: bool = OsSection(|| Os.borrow().borrow().is_none());
+        let result: bool = Os.borrow().borrow().is_none();
 
         if result {
             Some(OperatingSystem {
@@ -53,11 +53,9 @@ impl OperatingSystem {
     pub fn OsStart() -> ! {
 
         let mut stack: u32 = 0;
-        OsSection(|| {
-            if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
-                stack = (&(os.tasks[os.taskIdx as usize].stack[STACK_SIZE - 16]) as *const u32) as u32;
-            }
-        });
+        if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
+            stack = (&(os.tasks[os.taskIdx as usize].stack[STACK_SIZE - 16]) as *const u32) as u32;
+        }
 
         unsafe {
             asm!("msr psp, {0}", in(reg) stack);
@@ -66,12 +64,10 @@ impl OperatingSystem {
         }
 
         let mut startTask: *mut Task = (0 as *const u32) as *mut Task;
-        OsSection(|| {
-            if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
-                startTask = &mut (os.tasks[os.taskIdx as usize]);
-                os.osStatus = OsStatus::Running;
-            }
-        });
+        if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
+            startTask = &mut (os.tasks[os.taskIdx as usize]);
+            os.osStatus = OsStatus::Running;
+        }
         
         cyclic(startTask, 0);
     }
@@ -147,15 +143,6 @@ fn cyclic(task: *mut Task, _tstmp: u32) -> ! {
 
 fn empty(_tstmp: u32) {
     loop {}
-}
-
-/// Execute closure `f` in an interrupt-free context.
-#[inline]
-pub fn OsSection<F, R>(f: F) -> R
-where
-    F: FnOnce() -> R,
-{
-    f()
 }
 
 pub struct OsMutex<T> {

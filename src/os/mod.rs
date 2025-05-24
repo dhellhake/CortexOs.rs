@@ -1,6 +1,6 @@
 use core::{arch::asm, cell::{RefCell, UnsafeCell}, mem, ops::DerefMut};
 
-use task::{Task, TaskCycleTime, TaskStatus};
+use task::{empty, Task, TaskCycleTime, TaskStatus};
 
 pub mod task;
 pub mod isr;
@@ -131,8 +131,7 @@ impl OperatingSystem {
 
 
 fn cyclic(task: *mut Task, _tstmp: u32) -> ! {
-    let fun: fn(u32);
-    unsafe { fun = (*task).cyclic; }
+    let fun: fn(u32) = unsafe { (*task).cyclic };
 
     fun(_tstmp);
     
@@ -141,9 +140,6 @@ fn cyclic(task: *mut Task, _tstmp: u32) -> ! {
     loop { }
 }
 
-fn empty(_tstmp: u32) {
-    loop {}
-}
 
 pub struct OsMutex<T> {
     inner: UnsafeCell<T>,

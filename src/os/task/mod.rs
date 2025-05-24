@@ -38,5 +38,9 @@ impl Task {
 	pub fn SetTimeStamp(&mut self, _tstmp: u32)
 	{		
         self.stack[STACK_SIZE - 7] = _tstmp;
-	}	
+	}
+}
+
+pub fn empty(_tstmp: u32) {
+    loop {}
 }

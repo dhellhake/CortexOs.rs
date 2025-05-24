@@ -33,3 +33,10 @@ pub enum TaskCycleTime
 	_100MS		= 100,
 	Unknown		= 255,
 }
+
+impl Task {
+	pub fn SetTimeStamp(&mut self, _tstmp: u32)
+	{		
+        self.stack[STACK_SIZE - 7] = _tstmp;
+	}	
+}

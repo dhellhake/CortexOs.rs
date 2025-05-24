@@ -73,7 +73,7 @@ impl OperatingSystem {
             }
         });
         
-        cyclic(startTask);
+        cyclic(startTask, 0);
     }
 
     #[inline]
@@ -134,11 +134,14 @@ impl OperatingSystem {
 }
 
 
-fn cyclic(task: *mut Task) -> ! {
-    unsafe {
-        ((*task).cyclic)(123);
-        (*task).status = TaskStatus::Finished;
-    }
+fn cyclic(task: *mut Task, _tstmp: u32) -> ! {
+    let fun: fn(u32);
+    unsafe { fun = (*task).cyclic; }
+
+    fun(_tstmp);
+    
+    unsafe { (*task).status = TaskStatus::Finished; }
+
     loop { }
 }
 

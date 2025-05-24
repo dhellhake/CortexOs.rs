@@ -50,6 +50,7 @@ pub unsafe extern "C" fn PendSV() {
                                 break;
                             } else {
                                 os.ContextSwitch(os.taskIdx as usize, tIdx);
+                                os.tasks[tIdx].SetTimeStamp(os.elapsedMillis as u32);
                                 
                                 if let TaskStatus::Active = os.tasks[os.taskIdx as usize].status {
                                     os.tasks[os.taskIdx as usize].status = TaskStatus::Suspended;

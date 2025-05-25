@@ -1,18 +1,15 @@
 use core::ops::DerefMut;
 
-use crate::{cortex, peripherals::scb::SCB};
+use crate::mcu::{cortex::CriticalSection, scb::SCB};
 
 use super::{task::TaskStatus, Os, OsStatus};
 
 #[no_mangle]
 #[unsafe(link_section = ".ramfunc")]
 pub unsafe extern "C" fn SysTick_Isr() {  
-    cortex::CriticalSection(|| {
-        unsafe {
-            if let Some(ref mut scb) = SCB.borrow().as_mut_unchecked() {
-                scb.Set_PendSV();
-            }
-        }
+    CriticalSection(|| {
+        let scb = SCB.borrow().as_mut_unchecked().as_mut().unwrap();
+        scb.Set_PendSV();
     });
 }
 

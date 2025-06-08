@@ -1,6 +1,6 @@
 use core::ops::DerefMut;
 
-use crate::mcu::{cortex::CriticalSection, scb::SCB};
+use crate::mcu::{cortex::CriticalSection, scb::{PENDSVSET, SCB}};
 
 use super::{task::TaskStatus, Os, OsStatus};
 
@@ -9,7 +9,7 @@ use super::{task::TaskStatus, Os, OsStatus};
 pub unsafe extern "C" fn SysTick_Isr() {  
     CriticalSection(|| {
         let scb = SCB.borrow().as_mut_unchecked().as_mut().unwrap();
-        scb.Set_PendSV();
+        scb.Set_ICSR_PENDSVSET(PENDSVSET::VALUE_1);
     });
 }
 

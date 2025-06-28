@@ -1,6 +1,6 @@
 use core::ops::DerefMut;
 
-use crate::mcu::{cortex::CriticalSection, scb::{PENDSVSET, SCB}};
+use crate::pac::{cortex::CriticalSection, scb::{PENDSVSET, SCB}};
 
 use super::{task::TaskStatus, Os, OsStatus};
 

@@ -1,8 +1,17 @@
 use core::ops::DerefMut;
 
-use crate::pac::{cortex::CriticalSection, scb::{PENDSVSET, SCB}};
-
-use super::{task::TaskStatus, Os, OsStatus};
+use crate::drv::{
+    cortex::CriticalSection,
+    scb::{
+        SCB,
+        PENDSVSET
+    }
+};
+use super::{
+    Os,
+    task::TaskStatus,
+    OsStatus
+};
 
 #[no_mangle]
 #[unsafe(link_section = ".ramfunc")]

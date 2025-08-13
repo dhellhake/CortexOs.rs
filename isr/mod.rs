@@ -1,12 +1,6 @@
 use core::ops::DerefMut;
 
-use crate::drv::{
-    cortex::CriticalSection,
-    scb::{
-        SCB,
-        PENDSVSET
-    }
-};
+use crate::mcu::SCB;
 use super::{
     Os,
     task::TaskStatus,
@@ -15,11 +9,9 @@ use super::{
 
 #[no_mangle]
 #[unsafe(link_section = ".ramfunc")]
-pub unsafe extern "C" fn SysTick_Isr() {  
-    CriticalSection(|| {
-        let scb = SCB.borrow().as_mut_unchecked().as_mut().unwrap();
-        scb.Set_ICSR_PENDSVSET(PENDSVSET::VALUE_1);
-    });
+pub unsafe extern "C" fn SysTick_Isr() {
+    let scb = SCB.borrow().as_mut_unchecked().as_mut().unwrap();
+    scb.SetPendSV();
 }
 
 #[no_mangle]

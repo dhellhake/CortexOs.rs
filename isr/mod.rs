@@ -1,6 +1,6 @@
 use core::ops::DerefMut;
 
-use crate::mcu::SCB;
+use crate::mcu::{SCB, SYSTICK};
 use super::{
     Os,
     task::TaskStatus,
@@ -12,6 +12,9 @@ use super::{
 pub unsafe extern "C" fn SysTick_Isr() {
     let scb = SCB.borrow().as_mut_unchecked().as_mut().unwrap();
     scb.SetPendSV();
+
+    let syst = SYSTICK.borrow().as_mut_unchecked().as_mut().unwrap();
+    syst.AddTicks(syst.GetIntermediateTicks());
 }
 
 #[no_mangle]
@@ -25,7 +28,7 @@ pub unsafe extern "C" fn PendSV() {
             for tIdx in 0..os.tasks.len() {
                 match os.tasks[tIdx].status {
                     TaskStatus::Finished => {            
-                        if tIdx != os.taskIdx as usize {         
+                        if tIdx != os.taskIdx as usize {
                             if os.elapsedMillis % (os.tasks[tIdx].cycletime as u64) == 0 {
                                 os.ResetTask(tIdx);
                                 os.tasks[tIdx].status = TaskStatus::Ready;

@@ -1,4 +1,11 @@
-use core::{arch::asm, cell::{RefCell, UnsafeCell}, mem, ops::DerefMut};
+use core::{
+    arch::asm,
+    cell::{
+        RefCell,
+        UnsafeCell
+    },
+    mem
+};
 
 use task::{empty, Task, TaskCycleTime, TaskStatus};
 
@@ -28,6 +35,7 @@ pub struct OperatingSystem {
 }
 
 impl OperatingSystem {
+
     #[inline]
     pub fn new() -> Option<Self> {
         let result: bool = Os.borrow().borrow().is_none();
@@ -40,6 +48,7 @@ impl OperatingSystem {
                     status: TaskStatus::PreInit,
                     cycletime: TaskCycleTime::NonCyclic,
                     cyclic: empty,
+                    id: 0,
                     stack: [0; STACK_SIZE],
                 }; TASK_COUNT],
                 osStatus: OsStatus::UnInit,
@@ -49,31 +58,10 @@ impl OperatingSystem {
             None
         }
     }
-    
-    pub fn OsStart() -> ! {
-
-        let mut stack: u32 = 0;
-        if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
-            stack = (&(os.tasks[os.taskIdx as usize].stack[STACK_SIZE - 16]) as *const u32) as u32;
-        }
-
-        unsafe {
-            asm!("msr psp, {0}", in(reg) stack);
-            asm!("msr control, {0}", in(reg) 0x3);
-            asm!("isb");
-        }
-
-        let mut startTask: *mut Task = (0 as *const u32) as *mut Task;
-        if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
-            startTask = &mut (os.tasks[os.taskIdx as usize]);
-            os.osStatus = OsStatus::Running;
-        }
-        
-        cyclic(startTask, 0);
-    }
 
     #[inline]
     pub fn SetTask(&mut self, tIdx: usize, func: fn(u32), cycletime: TaskCycleTime) {
+        self.tasks[tIdx].id = tIdx as u32;
         self.tasks[tIdx].cyclic = func;
         self.tasks[tIdx].cycletime = cycletime;
         self.tasks[tIdx].sp = ((&self.tasks[tIdx].stack[STACK_SIZE - 16]) as *const u32) as u32;
@@ -130,12 +118,15 @@ impl OperatingSystem {
 }
 
 
-fn cyclic(task: *mut Task, _tstmp: u32) -> ! {
+pub fn cyclic(task: *mut Task, _tstmp: u32) -> ! {
     let fun: fn(u32) = unsafe { (*task).cyclic };
 
     fun(_tstmp);
     
-    unsafe { (*task).status = TaskStatus::Finished; }
+    unsafe { 
+        (*task).status = TaskStatus::Finished;
+        asm!("svc 0");
+    }
 
     loop { }
 }

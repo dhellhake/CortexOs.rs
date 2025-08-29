@@ -8,7 +8,6 @@ pub struct Task
 	pub status: TaskStatus,
 	pub cycletime: TaskCycleTime,
 	pub id: u32,
-	pub timeStamp: u64,
     pub cyclic: fn(u32),
     pub stack: [u32; STACK_SIZE],
 }
@@ -38,11 +37,7 @@ pub enum TaskCycleTime
 }
 
 impl Task {
-	pub fn SetTimeStamp(&mut self, tstmp_us: u64)
-	{
-		self.timeStamp = tstmp_us;
-        self.stack[STACK_SIZE - 7] = (tstmp_us / 1000) as u32;
-	}
+	
 }
 
 pub fn empty(_tstmp: u32) {

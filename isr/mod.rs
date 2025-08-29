@@ -9,6 +9,7 @@ use super::{
 #[no_mangle]
 pub unsafe extern "C" fn SysTick_Isr() {
     let syst = SYSTICK.borrow().as_mut_unchecked().as_mut().unwrap();
+    syst.RollOver();
     let elapsed_us: u64 = syst.GetElapsedMicroseconds();
 
     if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {

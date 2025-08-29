@@ -55,7 +55,6 @@ impl OperatingSystem {
                     status: TaskStatus::PreInit,
                     cycletime: TaskCycleTime::NonCyclic,
                     cyclic: empty,
-                    timeStamp: 0,
                     id: 0,
                     stack: [0; STACK_SIZE],
                 }; TASK_COUNT],
@@ -69,7 +68,7 @@ impl OperatingSystem {
 
     pub fn InvokeSchedule(&mut self, elapsed_us: u64)
     {
-        let mut earliestDeadline = u64::max_value();
+        let mut earliestTime = u64::max_value();
         for tIdx in 0..self.tasks.len() {
             match self.tasks[tIdx].cycletime {
                 TaskCycleTime::NonCyclic => {},
@@ -79,19 +78,19 @@ impl OperatingSystem {
                             // MTA
                         },
                         TaskStatus::Pending => {
-                            earliestDeadline = 0;
+                            earliestTime = 0;
                         },
                         _ => {
                             let cycletime_us = self.tasks[tIdx].cycletime as u64 * 1000;
-                            let deadline = elapsed_us - self.tasks[tIdx].timeStamp;
-                            
-                            if deadline >= cycletime_us {
+                            let deadline = cycletime_us - (elapsed_us % cycletime_us);
+                            let time = elapsed_us - (elapsed_us % cycletime_us) + cycletime_us;
+
+                            if deadline >= (cycletime_us - 100) {
                                 self.tasks[tIdx].status = TaskStatus::Pending;
-                                self.tasks[tIdx].SetTimeStamp(elapsed_us);
-                                earliestDeadline = 0;
+                                earliestTime = 0;
                             } else {
-                                if (cycletime_us - deadline) < earliestDeadline {
-                                    earliestDeadline = cycletime_us - deadline;
+                                if time < earliestTime {
+                                    earliestTime = time; 
                                 }
                             }
                         }
@@ -101,11 +100,11 @@ impl OperatingSystem {
         }
         
         let scb = unsafe { SCB.borrow().as_mut_unchecked().as_mut().unwrap() };
-        if earliestDeadline == 0 {
+        if earliestTime == 0 {
             scb.SetPendSV();
         } else {
-            let syst = unsafe { SYSTICK.borrow().as_mut_unchecked().as_mut().unwrap() };
-            syst.SetTimer(earliestDeadline as u32);
+            let syst = unsafe { SYSTICK.borrow().as_mut_unchecked().as_mut().unwrap() };            
+            syst.SetTimer(earliestTime as u32);
             if self.taskIdx != (self.tasks.len() - 1) as u32 {
                 scb.SetPendSV();
             }

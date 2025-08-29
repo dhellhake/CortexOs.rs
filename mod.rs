@@ -7,7 +7,14 @@ use core::{
     mem
 };
 
-use task::{empty, Task, TaskCycleTime, TaskStatus};
+use task::{
+    empty,
+    Task,
+    TaskCycleTime,
+    TaskStatus
+};
+
+use crate::mcu::{SCB, SYSTICK};
 
 pub mod task;
 pub mod isr;
@@ -48,6 +55,7 @@ impl OperatingSystem {
                     status: TaskStatus::PreInit,
                     cycletime: TaskCycleTime::NonCyclic,
                     cyclic: empty,
+                    timeStamp: 0,
                     id: 0,
                     stack: [0; STACK_SIZE],
                 }; TASK_COUNT],
@@ -57,6 +65,68 @@ impl OperatingSystem {
         } else {
             None
         }
+    }
+
+    pub fn InvokeSchedule(&mut self, elapsed_us: u64)
+    {
+        let mut earliestDeadline = u64::max_value();
+        for tIdx in 0..self.tasks.len() {
+            match self.tasks[tIdx].cycletime {
+                TaskCycleTime::NonCyclic => {},
+                _ => {
+                    match self.tasks[tIdx].status {
+                        TaskStatus::Active | TaskStatus::Suspended | TaskStatus::Finished => {
+                            // MTA
+                        },
+                        TaskStatus::Pending => {
+                            earliestDeadline = 0;
+                        },
+                        _ => {
+                            let cycletime_us = self.tasks[tIdx].cycletime as u64 * 1000;
+                            let deadline = elapsed_us - self.tasks[tIdx].timeStamp;
+                            
+                            if deadline >= cycletime_us {
+                                self.tasks[tIdx].status = TaskStatus::Pending;
+                                self.tasks[tIdx].SetTimeStamp(elapsed_us);
+                                earliestDeadline = 0;
+                            } else {
+                                if (cycletime_us - deadline) < earliestDeadline {
+                                    earliestDeadline = cycletime_us - deadline;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        let scb = unsafe { SCB.borrow().as_mut_unchecked().as_mut().unwrap() };
+        if earliestDeadline == 0 {
+            scb.SetPendSV();
+        } else {
+            let syst = unsafe { SYSTICK.borrow().as_mut_unchecked().as_mut().unwrap() };
+            syst.SetTimer(earliestDeadline as u32);
+            if self.taskIdx != (self.tasks.len() - 1) as u32 {
+                scb.SetPendSV();
+            }
+        }
+    }
+
+    pub fn GetNextTask(&mut self) -> u32 {
+        let mut nextTaskIndex: u32 = 0;
+        for tIdx in 0..self.tasks.len() {
+            match self.tasks[tIdx].status {
+                TaskStatus::Active => {
+                    break;
+                },
+                TaskStatus::Pending | TaskStatus::Suspended => {
+                    nextTaskIndex = tIdx as u32;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        nextTaskIndex
     }
 
     #[inline]

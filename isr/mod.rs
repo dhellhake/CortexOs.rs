@@ -1,69 +1,49 @@
 use core::ops::DerefMut;
 
-use crate::mcu::{SCB, SYSTICK};
+use crate::mcu::SYSTICK;
 use super::{
     Os,
-    task::TaskStatus,
-    OsStatus
+    task::TaskStatus
 };
 
 #[no_mangle]
-#[unsafe(link_section = ".ramfunc")]
 pub unsafe extern "C" fn SysTick_Isr() {
-    let scb = SCB.borrow().as_mut_unchecked().as_mut().unwrap();
-    scb.SetPendSV();
-
     let syst = SYSTICK.borrow().as_mut_unchecked().as_mut().unwrap();
-    syst.AddTicks(syst.GetIntermediateTicks());
+    let elapsed_us: u64 = syst.GetElapsedMicroseconds();
+
+    if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
+        os.InvokeSchedule(elapsed_us);
+    }
 }
 
 #[no_mangle]
-#[unsafe(link_section = ".ramfunc")]
+pub unsafe extern "C" fn SVCall() {
+    let syst = SYSTICK.borrow().as_mut_unchecked().as_mut().unwrap();
+    let elapsed_us: u64 = syst.GetElapsedMicroseconds();
+
+    if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
+        os.InvokeSchedule(elapsed_us);
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn PendSV() {
     if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
-        os.elapsedMillis += 1;
-
-        if let OsStatus::Running = os.osStatus
-        {
-            for tIdx in 0..os.tasks.len() {
-                match os.tasks[tIdx].status {
-                    TaskStatus::Finished => {            
-                        if tIdx != os.taskIdx as usize {
-                            if os.elapsedMillis % (os.tasks[tIdx].cycletime as u64) == 0 {
-                                os.ResetTask(tIdx);
-                                os.tasks[tIdx].status = TaskStatus::Ready;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            
-            for tIdx in 0..os.tasks.len() {
-                match os.tasks[tIdx].status {
-                    TaskStatus::Active => {
-                        break;
-                    }
-                    TaskStatus::Ready | TaskStatus::Suspended => {
-                        if tIdx == os.taskIdx as usize {
-                            os.tasks[tIdx].status = TaskStatus::Active;
-                            break;
-                        } else {
-                            os.ContextSwitch(os.taskIdx as usize, tIdx);
-                            os.tasks[tIdx].SetTimeStamp(os.elapsedMillis as u32);
-                            
-                            if let TaskStatus::Active = os.tasks[os.taskIdx as usize].status {
-                                os.tasks[os.taskIdx as usize].status = TaskStatus::Suspended;
-                            }
-
-                            os.tasks[tIdx].status = TaskStatus::Active;
-                            os.taskIdx = tIdx as u32;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
+        let tIdx = os.GetNextTask();
+        os.ContextSwitch(os.taskIdx as usize, tIdx as usize);
+        
+        match os.tasks[os.taskIdx as usize].status {
+            TaskStatus::Active => {
+                os.tasks[os.taskIdx as usize].status = TaskStatus::Suspended;
+            },
+            TaskStatus::Finished => {
+                os.ResetTask(os.taskIdx as usize);
+                os.tasks[os.taskIdx as usize].status = TaskStatus::Ready;
+            },
+            _ => {}
         }
+
+        os.tasks[tIdx as usize].status = TaskStatus::Active;
+        os.taskIdx = tIdx as u32;
     }
 }

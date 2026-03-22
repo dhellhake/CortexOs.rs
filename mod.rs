@@ -14,7 +14,10 @@ use task::{
     TaskStatus
 };
 
-use crate::mcu::{SCB, SYSTICK};
+use crate::mcu::{
+    SCB,
+    SYSTICK
+};
 
 pub mod task;
 pub mod isr;
@@ -99,14 +102,13 @@ impl OperatingSystem {
             }
         }
         
-        let scb = unsafe { SCB.borrow().as_mut_unchecked().as_mut().unwrap() };
         if earliestTime == 0 {
-            scb.SetPendSV();
+            
+        SCB.with(|scb| scb.SetPendSV());
         } else {
-            let syst = unsafe { SYSTICK.borrow().as_mut_unchecked().as_mut().unwrap() };            
-            syst.SetTimer(earliestTime as u32);
+            SYSTICK.with(|syst| syst.SetTimer(earliestTime as u32));
             if self.taskIdx != (self.tasks.len() - 1) as u32 {
-                scb.SetPendSV();
+                SCB.with(|scb| scb.SetPendSV());
             }
         }
     }

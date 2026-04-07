@@ -1,8 +1,6 @@
-use super::STACK_SIZE;
-
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub struct Task 
+pub struct Task<const STACK_SIZE: usize>
 {
     pub sp: u32,
 	pub status: TaskStatus,
@@ -34,10 +32,6 @@ pub enum TaskCycleTime
 	_50MS		= 50,
 	_100MS		= 100,
 	Unknown		= 255,
-}
-
-impl Task {
-	
 }
 
 pub fn empty(_tstmp: u32) {

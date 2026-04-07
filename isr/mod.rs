@@ -1,9 +1,11 @@
 use core::ops::DerefMut;
 
-use crate::mcu::SYSTICK;
-use super::{
-    Os,
-    task::TaskStatus
+use crate::{
+    mcu::{
+        Os,
+        SYSTICK
+    },
+    os::task::TaskStatus
 };
 
 #[no_mangle]

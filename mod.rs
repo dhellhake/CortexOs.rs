@@ -1,9 +1,6 @@
 use core::{
     arch::asm,
-    cell::{
-        RefCell,
-        UnsafeCell
-    },
+    cell::UnsafeCell,
     mem
 };
 
@@ -21,52 +18,30 @@ use crate::mcu::{
 
 pub mod task;
 pub mod isr;
-pub(crate) static Os: OsMutex<RefCell<Option<OperatingSystem>>> = OsMutex::new(RefCell::new(None));
-
-pub(crate) const TASK_COUNT: usize = 3;
-pub(crate) const STACK_SIZE: usize = 256;
-
-#[derive(Copy, Clone, Debug)]
-pub enum OsStatus
-{
-	UnInit		= 0,
-	Ready		= 2,
-	Running		= 3,
-	Stopped 	= 4,
-	Unknown		= 255,
-}
 
 #[repr(C, align(4))]
-pub struct OperatingSystem {
-    pub tasks: [Task; TASK_COUNT],
+pub struct Application<const TASK_COUNT: usize, const STACK_SIZE: usize> {
+    pub tasks: [Task<STACK_SIZE>; TASK_COUNT],
     pub taskIdx: u32,
-    pub osStatus: OsStatus,
     pub elapsedMillis: u64,
 }
 
-impl OperatingSystem {
+impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, STACK_SIZE> {
 
     #[inline]
     pub fn new() -> Option<Self> {
-        let result: bool = Os.borrow().borrow().is_none();
-
-        if result {
-            Some(OperatingSystem {
-                taskIdx: (TASK_COUNT - 1) as u32,
-                tasks: [Task { 
-                    sp: 0,
-                    status: TaskStatus::PreInit,
-                    cycletime: TaskCycleTime::NonCyclic,
-                    cyclic: empty,
-                    id: 0,
-                    stack: [0; STACK_SIZE],
-                }; TASK_COUNT],
-                osStatus: OsStatus::UnInit,
-                elapsedMillis: 0,
-            })
-        } else {
-            None
-        }
+        Some(Application {
+            taskIdx: (TASK_COUNT - 1) as u32,
+            tasks: [Task { 
+                sp: 0,
+                status: TaskStatus::PreInit,
+                cycletime: TaskCycleTime::NonCyclic,
+                cyclic: empty,
+                id: 0,
+                stack: [0; STACK_SIZE],
+            }; TASK_COUNT],
+            elapsedMillis: 0,
+        })
     }
 
     pub fn InvokeSchedule(&mut self, elapsed_us: u64)
@@ -137,8 +112,8 @@ impl OperatingSystem {
         self.tasks[tIdx].cycletime = cycletime;
         self.tasks[tIdx].sp = ((&self.tasks[tIdx].stack[STACK_SIZE - 16]) as *const u32) as u32;
         self.tasks[tIdx].stack[STACK_SIZE - 1] = 0x01000000;
-        self.tasks[tIdx].stack[STACK_SIZE - 2] = (cyclic as *const ()) as u32;
-        self.tasks[tIdx].stack[STACK_SIZE - 8] = ((self.tasks.as_ptr() as usize) + (mem::size_of::<Task>() * tIdx)) as u32;
+        self.tasks[tIdx].stack[STACK_SIZE - 2] = (cyclic::<STACK_SIZE> as *const ()) as u32;
+        self.tasks[tIdx].stack[STACK_SIZE - 8] = ((self.tasks.as_ptr() as usize) + (mem::size_of::<Task<STACK_SIZE>>() * tIdx)) as u32;
         self.tasks[tIdx].status = TaskStatus::Ready;
     }
 
@@ -146,8 +121,8 @@ impl OperatingSystem {
     pub fn ResetTask(&mut self, tIdx: usize) {
         self.tasks[tIdx].sp = ((&self.tasks[tIdx].stack[STACK_SIZE - 16]) as *const u32) as u32;
         self.tasks[tIdx].stack[STACK_SIZE - 1] = 0x01000000;
-        self.tasks[tIdx].stack[STACK_SIZE - 2] = (cyclic as *const ()) as u32;
-        self.tasks[tIdx].stack[STACK_SIZE - 8] = ((self.tasks.as_ptr() as usize) + (mem::size_of::<Task>() * tIdx)) as u32;
+        self.tasks[tIdx].stack[STACK_SIZE - 2] = (cyclic::<STACK_SIZE> as *const ()) as u32;
+        self.tasks[tIdx].stack[STACK_SIZE - 8] = ((self.tasks.as_ptr() as usize) + (mem::size_of::<Task<STACK_SIZE>>() * tIdx)) as u32;
     }
 
     fn ContextSwitch(&mut self, curTIdx: usize, setTIdx: usize)
@@ -189,7 +164,7 @@ impl OperatingSystem {
 }
 
 
-pub fn cyclic(task: *mut Task, _tstmp: u32) -> ! {
+pub fn cyclic<const M: usize>(task: *mut Task<M>, _tstmp: u32) -> ! {
     let fun: fn(u32) = unsafe { (*task).cyclic };
 
     fun(_tstmp);
@@ -203,14 +178,14 @@ pub fn cyclic(task: *mut Task, _tstmp: u32) -> ! {
 }
 
 
-pub struct OsMutex<T> {
+pub struct Mutex<T> {
     inner: UnsafeCell<T>,
 }
 
-impl<T> OsMutex<T> {
-    /// Creates a new OsMutex
+impl<T> Mutex<T> {
+    /// Creates a new Mutex
     pub const fn new(value: T) -> Self {
-        OsMutex {
+        Mutex {
             inner: UnsafeCell::new(value),
         }
     }
@@ -219,4 +194,4 @@ impl<T> OsMutex<T> {
         unsafe { &*self.inner.get() }
     }
 }
-unsafe impl<T> Sync for OsMutex<T> where T: Send {}
+unsafe impl<T> Sync for Mutex<T> where T: Send {}

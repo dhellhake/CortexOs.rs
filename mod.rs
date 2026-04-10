@@ -29,8 +29,8 @@ pub struct Application<const TASK_COUNT: usize, const STACK_SIZE: usize> {
 impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, STACK_SIZE> {
 
     #[inline]
-    pub fn new() -> Option<Self> {
-        Some(Application {
+    pub fn new() -> Self {
+        Application {
             taskIdx: (TASK_COUNT - 1) as u32,
             tasks: [Task { 
                 sp: 0,
@@ -41,7 +41,7 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
                 stack: [0; STACK_SIZE],
             }; TASK_COUNT],
             elapsedMillis: 0,
-        })
+        }
     }
 
     pub fn InvokeSchedule(&mut self, elapsed_us: u64)

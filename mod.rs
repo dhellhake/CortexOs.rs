@@ -18,6 +18,7 @@ use crate::mcu::{
 
 pub mod task;
 pub mod isr;
+pub mod intercom;
 
 #[repr(C, align(4))]
 pub struct Application<const TASK_COUNT: usize, const STACK_SIZE: usize> {

@@ -1,3 +1,14 @@
+#[repr(align(8))]
+#[derive(Copy, Clone, Debug)]
+pub struct Stack<const STACK_SIZE: usize>(pub [u32; STACK_SIZE]);
+
+impl<const STACK_SIZE: usize> Stack<STACK_SIZE> {
+    #[inline]
+    pub const fn new() -> Self {
+        Self([0; STACK_SIZE])
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct Task<const STACK_SIZE: usize>
@@ -8,7 +19,7 @@ pub struct Task<const STACK_SIZE: usize>
     pub id: u32,
     pub cyclic: fn(u32),
     pub timestamp_us: u32,
-    pub stack: [u32; STACK_SIZE],
+    pub stack: Stack<STACK_SIZE>,
 }
 
 #[derive(Copy, Clone, Debug)]

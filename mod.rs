@@ -11,16 +11,30 @@ use task::{
     TaskStatus
 };
 
-use crate::mcu::{
-    SCB,
-    SYSTICK
+use crate::{
+    mcu::{
+        SCB,
+        SYSTICK
+    },
+    os::task::Stack
 };
 
 pub mod task;
 pub mod isr;
 pub mod intercom;
 
-#[repr(C, align(4))]
+const INITIAL_XPSR: u32 = 0x0100_0000;
+const STACK_PATTERN: u32 = 0xE25A_2EA5;
+const STACK_GUARD: u32 = 0xDEAD_BEEF;
+const STACK_GUARD_WORDS: usize = 4;
+const INITIAL_FRAME_WORDS: usize = 16;
+
+#[no_mangle]
+pub extern "C" fn task_return_trap() -> ! {
+    loop {}
+}
+
+#[repr(C, align(8))]
 pub struct Application<const TASK_COUNT: usize, const STACK_SIZE: usize> {
     pub tasks: [Task<STACK_SIZE>; TASK_COUNT],
     pub taskIdx: u32,
@@ -40,7 +54,7 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
                 cyclic: empty,
                 id: 0,
                 timestamp_us: 0,
-                stack: [0; STACK_SIZE],
+                stack: Stack::new(),
             }; TASK_COUNT],
             elapsedMillis: 0,
         }
@@ -107,25 +121,51 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
 
     #[inline]
     fn PrepareTaskStack(&mut self, tIdx: usize) {
+        assert!(STACK_SIZE >= INITIAL_FRAME_WORDS + STACK_GUARD_WORDS);
+
+        // Required for 8-byte stack alignment because each stack entry is 4 bytes.
+        assert!((STACK_SIZE & 1) == 0);
+
         let task_ptr =
             ((self.tasks.as_ptr() as usize)
                 + (mem::size_of::<Task<STACK_SIZE>>() * tIdx)) as u32;
 
-        let timestamp_us = self.tasks[tIdx].timestamp_us;
+        let stack = &mut self.tasks[tIdx].stack.0;
 
-        self.tasks[tIdx].sp =
-            ((&self.tasks[tIdx].stack[STACK_SIZE - 16]) as *const u32) as u32;
+        for word in stack.iter_mut() {
+            *word = STACK_PATTERN;
+        }
 
-        // Hardware exception frame as expected by Cortex-M exception return.
-        self.tasks[tIdx].stack[STACK_SIZE - 8] = task_ptr; // r0: *mut Task
-        self.tasks[tIdx].stack[STACK_SIZE - 7] = timestamp_us; // r1: task timestamp
-        self.tasks[tIdx].stack[STACK_SIZE - 6] = 0; // r2
-        self.tasks[tIdx].stack[STACK_SIZE - 5] = 0; // r3
-        self.tasks[tIdx].stack[STACK_SIZE - 4] = 0; // r12
-        self.tasks[tIdx].stack[STACK_SIZE - 3] = 0; // lr
-        self.tasks[tIdx].stack[STACK_SIZE - 2] =
-            (cyclic::<STACK_SIZE> as *const ()) as u32; // pc
-        self.tasks[tIdx].stack[STACK_SIZE - 1] = 0x01000000; // xPSR: Thumb bit set
+        for idx in 0..STACK_GUARD_WORDS {
+            stack[idx] = STACK_GUARD;
+        }
+
+        let frame_base = STACK_SIZE - INITIAL_FRAME_WORDS;
+
+        self.tasks[tIdx].sp = (&stack[frame_base] as *const u32) as u32;
+
+        debug_assert_eq!(self.tasks[tIdx].sp & 0x7, 0);
+
+        // Software-saved frame.
+        // Your context switcher restores this as r8-r11 first, then r4-r7.
+        stack[STACK_SIZE - 16] = STACK_PATTERN; // r8
+        stack[STACK_SIZE - 15] = STACK_PATTERN; // r9
+        stack[STACK_SIZE - 14] = STACK_PATTERN; // r10
+        stack[STACK_SIZE - 13] = STACK_PATTERN; // r11
+        stack[STACK_SIZE - 12] = STACK_PATTERN; // r4
+        stack[STACK_SIZE - 11] = STACK_PATTERN; // r5
+        stack[STACK_SIZE - 10] = STACK_PATTERN; // r6
+        stack[STACK_SIZE - 9]  = STACK_PATTERN; // r7
+
+        // Hardware exception frame consumed by Cortex-M exception return.
+        stack[STACK_SIZE - 8] = task_ptr;                              // r0
+        stack[STACK_SIZE - 7] = self.tasks[tIdx].timestamp_us;         // r1
+        stack[STACK_SIZE - 6] = 0;                                     // r2
+        stack[STACK_SIZE - 5] = 0;                                     // r3
+        stack[STACK_SIZE - 4] = 0;                                     // r12
+        stack[STACK_SIZE - 3] = (task_return_trap as *const ()) as u32; // lr
+        stack[STACK_SIZE - 2] = ((cyclic::<STACK_SIZE> as *const ()) as u32) | 1; // pc
+        stack[STACK_SIZE - 1] = INITIAL_XPSR;                          // xPSR
     }
 
     pub fn GetNextTask(&mut self) -> u32 {

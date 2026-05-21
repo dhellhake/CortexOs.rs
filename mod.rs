@@ -89,23 +89,6 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
         }
     }
 
-    pub fn GetNextTask(&mut self) -> u32 {
-        let mut nextTaskIndex: u32 = 0;
-        for tIdx in 0..self.tasks.len() {
-            match self.tasks[tIdx].status {
-                TaskStatus::Active => {
-                    break;
-                },
-                TaskStatus::Pending | TaskStatus::Suspended => {
-                    nextTaskIndex = tIdx as u32;
-                    break;
-                }
-                _ => {}
-            }
-        }
-        nextTaskIndex
-    }
-
     #[inline]
     pub fn SetTask(&mut self, tIdx: usize, func: fn(u32), cycletime: TaskCycleTime) {
         self.tasks[tIdx].id = tIdx as u32;
@@ -126,41 +109,53 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
         self.tasks[tIdx].stack[STACK_SIZE - 8] = ((self.tasks.as_ptr() as usize) + (mem::size_of::<Task<STACK_SIZE>>() * tIdx)) as u32;
     }
 
-    fn ContextSwitch(&mut self, curTIdx: usize, setTIdx: usize)
-    {
-        let mut t0sp: u32 = ((&self.tasks[curTIdx].sp) as *const u32) as u32;
-        let mut t1sp: u32 = ((&self.tasks[setTIdx].sp) as *const u32) as u32;
-        unsafe {
-            asm!(
-                "cpsid i",
-                "mrs	r0, psp",
-                "subs	r0, #16",
-                "stmia	r0!,{{r4-r7}}",
-                "mov	r4, r8",
-                "mov	r5, r9",
-                "mov	r6, r10",
-                "mov	r7, r11",
-                "subs	r0, #32",
-                "stmia	r0!,{{r4-r7}}",
-                "subs	r0, #16",
-                "str	r0, [r1]",
-                inout("r1") t0sp,
-            );
-
-            asm!(
-                "ldr	r0, [r1]",
-                "ldmia	r0!,{{r4-r7}}",
-                "mov	r8, r4",
-                "mov	r9, r5",
-                "mov	r10, r6",
-                "mov	r11, r7",
-                "ldmia	r0!,{{r4-r7}}",
-                "msr	psp, r0",
-                "ldr r0, =0xFFFFFFFD",
-                "cpsie	i",
-                inout("r1") t1sp,
-            );
+    pub fn GetNextTask(&mut self) -> u32 {
+        // Run newly released work first.
+        for tIdx in 0..self.tasks.len() {
+            if matches!(self.tasks[tIdx].status, TaskStatus::Pending) {
+                return tIdx as u32;
+            }
         }
+
+        // Then resume a preempted task, including the idle/background task.
+        for tIdx in 0..self.tasks.len() {
+            if matches!(self.tasks[tIdx].status, TaskStatus::Suspended) {
+                return tIdx as u32;
+            }
+        }
+
+        // Last task is configured as the background/idle task in main().
+        (self.tasks.len() - 1) as u32
+    }
+
+    /// Called from the PendSV assembly handler after r4-r11 of the outgoing task
+    /// have already been saved to `current_sp`.
+    ///
+    /// Returns the saved stack pointer of the task that shall be restored.
+    #[inline(never)]
+    pub fn PendSVSelectNext(&mut self, current_sp: u32) -> u32 {
+        let current = self.taskIdx as usize;
+
+        // Save outgoing task's PSP.
+        self.tasks[current].sp = current_sp;
+
+        match self.tasks[current].status {
+            TaskStatus::Active => {
+                self.tasks[current].status = TaskStatus::Suspended;
+            },
+            TaskStatus::Finished => {
+                self.ResetTask(current);
+                self.tasks[current].status = TaskStatus::Ready;
+            },
+            _ => {}
+        }
+
+        let next = self.GetNextTask() as usize;
+
+        self.tasks[next].status = TaskStatus::Active;
+        self.taskIdx = next as u32;
+
+        self.tasks[next].sp
     }
 }
 

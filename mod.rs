@@ -39,6 +39,7 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
                 cycletime: TaskCycleTime::NonCyclic,
                 cyclic: empty,
                 id: 0,
+                timestamp_us: 0,
                 stack: [0; STACK_SIZE],
             }; TASK_COUNT],
             elapsedMillis: 0,
@@ -94,19 +95,37 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
         self.tasks[tIdx].id = tIdx as u32;
         self.tasks[tIdx].cyclic = func;
         self.tasks[tIdx].cycletime = cycletime;
-        self.tasks[tIdx].sp = ((&self.tasks[tIdx].stack[STACK_SIZE - 16]) as *const u32) as u32;
-        self.tasks[tIdx].stack[STACK_SIZE - 1] = 0x01000000;
-        self.tasks[tIdx].stack[STACK_SIZE - 2] = (cyclic::<STACK_SIZE> as *const ()) as u32;
-        self.tasks[tIdx].stack[STACK_SIZE - 8] = ((self.tasks.as_ptr() as usize) + (mem::size_of::<Task<STACK_SIZE>>() * tIdx)) as u32;
+        self.tasks[tIdx].timestamp_us = 0;
+        self.PrepareTaskStack(tIdx);
         self.tasks[tIdx].status = TaskStatus::Ready;
     }
 
     #[inline]
     pub fn ResetTask(&mut self, tIdx: usize) {
-        self.tasks[tIdx].sp = ((&self.tasks[tIdx].stack[STACK_SIZE - 16]) as *const u32) as u32;
-        self.tasks[tIdx].stack[STACK_SIZE - 1] = 0x01000000;
-        self.tasks[tIdx].stack[STACK_SIZE - 2] = (cyclic::<STACK_SIZE> as *const ()) as u32;
-        self.tasks[tIdx].stack[STACK_SIZE - 8] = ((self.tasks.as_ptr() as usize) + (mem::size_of::<Task<STACK_SIZE>>() * tIdx)) as u32;
+        self.PrepareTaskStack(tIdx);
+    }
+
+    #[inline]
+    fn PrepareTaskStack(&mut self, tIdx: usize) {
+        let task_ptr =
+            ((self.tasks.as_ptr() as usize)
+                + (mem::size_of::<Task<STACK_SIZE>>() * tIdx)) as u32;
+
+        let timestamp_us = self.tasks[tIdx].timestamp_us;
+
+        self.tasks[tIdx].sp =
+            ((&self.tasks[tIdx].stack[STACK_SIZE - 16]) as *const u32) as u32;
+
+        // Hardware exception frame as expected by Cortex-M exception return.
+        self.tasks[tIdx].stack[STACK_SIZE - 8] = task_ptr; // r0: *mut Task
+        self.tasks[tIdx].stack[STACK_SIZE - 7] = timestamp_us; // r1: task timestamp
+        self.tasks[tIdx].stack[STACK_SIZE - 6] = 0; // r2
+        self.tasks[tIdx].stack[STACK_SIZE - 5] = 0; // r3
+        self.tasks[tIdx].stack[STACK_SIZE - 4] = 0; // r12
+        self.tasks[tIdx].stack[STACK_SIZE - 3] = 0; // lr
+        self.tasks[tIdx].stack[STACK_SIZE - 2] =
+            (cyclic::<STACK_SIZE> as *const ()) as u32; // pc
+        self.tasks[tIdx].stack[STACK_SIZE - 1] = 0x01000000; // xPSR: Thumb bit set
     }
 
     pub fn GetNextTask(&mut self) -> u32 {

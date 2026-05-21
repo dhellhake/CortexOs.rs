@@ -3,10 +3,11 @@
 pub struct Task<const STACK_SIZE: usize>
 {
     pub sp: u32,
-	pub status: TaskStatus,
-	pub cycletime: TaskCycleTime,
-	pub id: u32,
+    pub status: TaskStatus,
+    pub cycletime: TaskCycleTime,
+    pub id: u32,
     pub cyclic: fn(u32),
+    pub timestamp_us: u32,
     pub stack: [u32; STACK_SIZE],
 }
 

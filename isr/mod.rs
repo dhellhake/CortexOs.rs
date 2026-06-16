@@ -12,25 +12,25 @@ use crate::{
 
 #[no_mangle]
 pub unsafe extern "C" fn SysTick_Isr() {
+    let mut elapsed_us: u64 = 0;
     SYSTICK.with(|syst| {
         syst.RollOver();
-        let elapsed_us: u64 = syst.GetElapsedMicroseconds();
-
-        if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
-            os.InvokeSchedule(elapsed_us);
-        }
-    });
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn SVCall() {
-SYSTICK.with(|syst| {
-    let elapsed_us: u64 = syst.GetElapsedMicroseconds();
+        elapsed_us = syst.GetElapsedMicroseconds();
+    });    
 
     if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
         os.InvokeSchedule(elapsed_us);
     }
-});
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn SVCall() {
+    let mut elapsed_us: u64 = 0;
+    SYSTICK.with(|syst| elapsed_us = syst.GetElapsedMicroseconds());
+
+    if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
+        os.InvokeSchedule(elapsed_us);
+    }
 }
 
 #[no_mangle]

@@ -14,7 +14,6 @@ use crate::{
 pub unsafe extern "C" fn SysTick_Isr() {
     let mut elapsed_us: u64 = 0;
     SYSTICK.with(|syst| {
-        syst.RollOver();
         elapsed_us = syst.GetElapsedMicroseconds();
     });    
 

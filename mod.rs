@@ -97,8 +97,8 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
             
         SCB.with(|scb| scb.SetPendSV());
         } else {
-            SYSTICK.with(|syst| syst.SetTimer(earliestTime as u32));
-            if self.taskIdx != (self.tasks.len() - 1) as u32 {
+            let armed = SYSTICK.with(|syst| syst.SetTimerAt(earliestTime));
+            if !armed {
                 SCB.with(|scb| scb.SetPendSV());
             }
         }

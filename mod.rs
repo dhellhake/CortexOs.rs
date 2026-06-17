@@ -54,53 +54,72 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
                 cyclic: empty,
                 id: 0,
                 timestamp_us: 0,
+                next_release_us: 0,
+                missed_releases: 0,
                 stack: Stack::new(),
             }; TASK_COUNT],
             elapsedMillis: 0,
         }
     }
 
-    pub fn InvokeSchedule(&mut self, elapsed_us: u64)
-    {
-        let mut earliestTime = u64::max_value();
-        for tIdx in 0..self.tasks.len() {
-            match self.tasks[tIdx].cycletime {
-                TaskCycleTime::NonCyclic => {},
-                _ => {
-                    match self.tasks[tIdx].status {
-                        TaskStatus::Active | TaskStatus::Suspended | TaskStatus::Finished => {
-                            // MTA
-                        },
-                        TaskStatus::Pending => {
-                            earliestTime = 0;
-                        },
-                        _ => {
-                            let cycletime_us = self.tasks[tIdx].cycletime as u64 * 1000;
-                            let deadline = cycletime_us - (elapsed_us % cycletime_us);
-                            let time = elapsed_us - (elapsed_us % cycletime_us) + cycletime_us;
+    pub fn InvokeSchedule(&mut self, now_us: u64) {
+        let mut need_switch = false;
+        let mut next_wakeup_us = u64::MAX;
 
-                            if deadline >= (cycletime_us - 100) {
-                                self.tasks[tIdx].status = TaskStatus::Pending;
-                                earliestTime = 0;
-                            } else {
-                                if time < earliestTime {
-                                    earliestTime = time; 
-                                }
-                            }
+        for tIdx in 0..self.tasks.len() {
+            let Some(period_us) = self.tasks[tIdx].cycletime.period_us() else {
+                continue;
+            };
+
+            if now_us >= self.tasks[tIdx].next_release_us {
+                let release_us = self.tasks[tIdx].next_release_us;
+                let due_count = ((now_us - release_us) / period_us) + 1;
+
+                self.tasks[tIdx].next_release_us =
+                    release_us.saturating_add(due_count.saturating_mul(period_us));
+
+                match self.tasks[tIdx].status {
+                    TaskStatus::Ready => {
+                        self.tasks[tIdx].timestamp_us = release_us as u32;
+                        self.PrepareTaskStack(tIdx);
+                        self.tasks[tIdx].status = TaskStatus::Pending;
+                        need_switch = true;
+
+                        if due_count > 1 {
+                            self.tasks[tIdx].missed_releases =
+                                self.tasks[tIdx].missed_releases.saturating_add((due_count - 1) as u32);
                         }
                     }
+
+                    TaskStatus::Pending
+                    | TaskStatus::Active
+                    | TaskStatus::Suspended
+                    | TaskStatus::Finished => {
+                        self.tasks[tIdx].missed_releases =
+                            self.tasks[tIdx].missed_releases.saturating_add(due_count as u32);
+                    }
+
+                    _ => {}
                 }
             }
-        }
-        
-        if earliestTime == 0 {
-            
-        SCB.with(|scb| scb.SetPendSV());
-        } else {
-            let armed = SYSTICK.with(|syst| syst.SetTimerAt(earliestTime));
-            if !armed {
-                SCB.with(|scb| scb.SetPendSV());
+
+            if matches!(self.tasks[tIdx].status, TaskStatus::Pending) {
+                need_switch = true;
             }
+
+            next_wakeup_us = next_wakeup_us.min(self.tasks[tIdx].next_release_us);
+        }
+
+        if next_wakeup_us != u64::MAX {
+            let armed = SYSTICK.with(|syst| syst.SetTimerAt(next_wakeup_us));
+            if !armed {
+                need_switch = true;
+            }
+        }
+
+        let current = self.taskIdx as usize;
+        if need_switch || matches!(self.tasks[current].status, TaskStatus::Finished) {
+            SCB.with(|scb| scb.SetPendSV());
         }
     }
 
@@ -110,6 +129,8 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
         self.tasks[tIdx].cyclic = func;
         self.tasks[tIdx].cycletime = cycletime;
         self.tasks[tIdx].timestamp_us = 0;
+        self.tasks[tIdx].next_release_us = cycletime.period_us().unwrap_or(0);
+        self.tasks[tIdx].missed_releases = 0;
         self.PrepareTaskStack(tIdx);
         self.tasks[tIdx].status = TaskStatus::Ready;
     }

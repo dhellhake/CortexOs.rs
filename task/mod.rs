@@ -19,6 +19,8 @@ pub struct Task<const STACK_SIZE: usize>
     pub id: u32,
     pub cyclic: fn(u32),
     pub timestamp_us: u32,
+	pub next_release_us: u64,
+	pub missed_releases: u32,
     pub stack: Stack<STACK_SIZE>,
 }
 
@@ -44,6 +46,15 @@ pub enum TaskCycleTime
 	_50MS		= 50,
 	_100MS		= 100,
 	Unknown		= 255,
+}
+
+impl TaskCycleTime {
+    pub const fn period_us(self) -> Option<u64> {
+        match self {
+            TaskCycleTime::NonCyclic | TaskCycleTime::Unknown => None,
+            _ => Some(self as u64 * 1000),
+        }
+    }
 }
 
 pub fn empty(_tstmp: u32) {

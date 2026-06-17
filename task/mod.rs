@@ -17,8 +17,8 @@ pub struct Task<const STACK_SIZE: usize>
     pub status: TaskStatus,
     pub cycletime: TaskCycleTime,
     pub id: u32,
-    pub cyclic: fn(u32),
-    pub timestamp_us: u32,
+    pub cyclic: fn(u64),
+    pub timestamp_us: u64,
 	pub next_release_us: u64,
 	pub missed_releases: u32,
     pub stack: Stack<STACK_SIZE>,
@@ -57,6 +57,6 @@ impl TaskCycleTime {
     }
 }
 
-pub fn empty(_tstmp: u32) {
+pub fn empty(_tstmp: u64) {
     loop {}
 }

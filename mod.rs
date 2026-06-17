@@ -80,7 +80,7 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
 
                 match self.tasks[tIdx].status {
                     TaskStatus::Ready => {
-                        self.tasks[tIdx].timestamp_us = release_us as u32;
+                        self.tasks[tIdx].timestamp_us = release_us;
                         self.PrepareTaskStack(tIdx);
                         self.tasks[tIdx].status = TaskStatus::Pending;
                         need_switch = true;
@@ -124,7 +124,7 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
     }
 
     #[inline]
-    pub fn SetTask(&mut self, tIdx: usize, func: fn(u32), cycletime: TaskCycleTime) {
+    pub fn SetTask(&mut self, tIdx: usize, func: fn(u64), cycletime: TaskCycleTime) {
         self.tasks[tIdx].id = tIdx as u32;
         self.tasks[tIdx].cyclic = func;
         self.tasks[tIdx].cycletime = cycletime;
@@ -180,7 +180,7 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
 
         // Hardware exception frame consumed by Cortex-M exception return.
         stack[STACK_SIZE - 8] = task_ptr;                              // r0
-        stack[STACK_SIZE - 7] = self.tasks[tIdx].timestamp_us;         // r1
+        stack[STACK_SIZE - 7] = 0;                                     // r1
         stack[STACK_SIZE - 6] = 0;                                     // r2
         stack[STACK_SIZE - 5] = 0;                                     // r3
         stack[STACK_SIZE - 4] = 0;                                     // r12
@@ -240,10 +240,11 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
 }
 
 
-pub fn cyclic<const M: usize>(task: *mut Task<M>, _tstmp: u32) -> ! {
-    let fun: fn(u32) = unsafe { (*task).cyclic };
+pub extern "C" fn cyclic<const M: usize>(task: *mut Task<M>) -> ! {
+    let fun: fn(u64) = unsafe { (*task).cyclic };
+    let tstmp = unsafe { (*task).timestamp_us };
 
-    fun(_tstmp);
+    fun(tstmp);
     
     unsafe { 
         (*task).status = TaskStatus::Finished;

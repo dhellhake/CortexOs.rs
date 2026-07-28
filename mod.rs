@@ -8,11 +8,13 @@ use task::{
     empty,
     Task,
     TaskCycleTime,
+    TaskRole,
     TaskStatus
 };
 
 use crate::{
     mcu::{
+        McuManager,
         SCB,
         SYSTICK
     },
@@ -52,6 +54,7 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
                 status: TaskStatus::PreInit,
                 cycletime: TaskCycleTime::NonCyclic,
                 cyclic: empty,
+                role: TaskRole::Background,
                 id: 0,
                 timestamp_us: 0,
                 next_release_us: 0,
@@ -124,15 +127,29 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
     }
 
     #[inline]
-    pub fn SetTask(&mut self, tIdx: usize, func: fn(u64), cycletime: TaskCycleTime) {
+    pub fn SetTask(&mut self, tIdx: usize, func: fn(u64), cycletime: TaskCycleTime, role: TaskRole) {
         self.tasks[tIdx].id = tIdx as u32;
         self.tasks[tIdx].cyclic = func;
         self.tasks[tIdx].cycletime = cycletime;
+        self.tasks[tIdx].role = role;
         self.tasks[tIdx].timestamp_us = 0;
         self.tasks[tIdx].next_release_us = cycletime.period_us().unwrap_or(0);
         self.tasks[tIdx].missed_releases = 0;
         self.PrepareTaskStack(tIdx);
         self.tasks[tIdx].status = TaskStatus::Ready;
+    }
+
+    #[inline]
+    pub fn SetCyclicReleaseBase(&mut self, base_us: u64) {
+        for task in self.tasks.iter_mut() {
+            let Some(period_us) = task.cycletime.period_us() else {
+                continue;
+            };
+
+            task.timestamp_us = base_us;
+            task.next_release_us = base_us.saturating_add(period_us);
+            task.missed_releases = 0;
+        }
     }
 
     #[inline]
@@ -243,8 +260,17 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
 pub extern "C" fn cyclic<const M: usize>(task: *mut Task<M>) -> ! {
     let fun: fn(u64) = unsafe { (*task).cyclic };
     let tstmp = unsafe { (*task).timestamp_us };
+    let taskId = unsafe { (*task).id };
+    let cycletime = unsafe { (*task).cycletime };
+    let role = unsafe { (*task).role };
 
+    if role.ReportsProgramFlowCheckpoints(cycletime) {
+        McuManager::ProgramFlow_ReportTaskStart(taskId);
+    }
     fun(tstmp);
+    if role.ReportsProgramFlowCheckpoints(cycletime) {
+        McuManager::ProgramFlow_ReportTaskEnd(taskId);
+    }
     
     unsafe { 
         (*task).status = TaskStatus::Finished;

@@ -18,6 +18,7 @@ pub struct Task<const STACK_SIZE: usize>
     pub cycletime: TaskCycleTime,
     pub id: u32,
     pub cyclic: fn(u64),
+    pub role: TaskRole,
     pub timestamp_us: u64,
 	pub next_release_us: u64,
 	pub missed_releases: u32,
@@ -34,6 +35,27 @@ pub enum TaskStatus
 	Active		= 4,
 	Finished	= 5,
 	Unknown		= 255,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TaskRole
+{
+	Supervised		= 0,
+	Unsupervised	= 1,
+	Background		= 2,
+}
+
+impl TaskRole {
+    #[inline]
+    pub const fn ReportsProgramFlowCheckpoints(self, cycletime: TaskCycleTime) -> bool {
+        matches!(self, TaskRole::Supervised)
+            && !matches!(cycletime, TaskCycleTime::NonCyclic | TaskCycleTime::Unknown)
+    }
+
+    #[inline]
+    pub const fn IsUnsupervised(self) -> bool {
+        matches!(self, TaskRole::Unsupervised)
+    }
 }
 
 #[derive(Copy, Clone, Debug)]

@@ -1,29 +1,12 @@
-use core::{
-    arch::asm,
-    cell::UnsafeCell,
-    mem
-};
+use core::{arch::asm, ptr};
 
-use task::{
-    empty,
-    Task,
-    TaskCycleTime,
-    TaskRole,
-    TaskStatus
-};
+use task::{empty, Task, TaskCycleTime, TaskRole, TaskStackStorage, TaskStatus};
 
-use crate::{
-    mcu::{
-        McuManager,
-        SCB,
-        SYSTICK
-    },
-    os::task::Stack
-};
+use crate::mcu::{McuManager, Os, SCB, SYSTICK};
 
-pub mod task;
-pub mod isr;
 pub mod intercom;
+pub mod isr;
+pub mod task;
 
 const INITIAL_XPSR: u32 = 0x0100_0000;
 const STACK_PATTERN: u32 = 0xE25A_2EA5;
@@ -33,23 +16,35 @@ const INITIAL_FRAME_WORDS: usize = 16;
 
 #[no_mangle]
 pub extern "C" fn task_return_trap() -> ! {
-    loop {}
+    loop {
+        core::hint::spin_loop();
+    }
 }
 
 #[repr(C, align(8))]
 pub struct Application<const TASK_COUNT: usize, const STACK_SIZE: usize> {
-    pub tasks: [Task<STACK_SIZE>; TASK_COUNT],
-    pub taskIdx: u32,
-    pub elapsedMillis: u64,
+    tasks: [Task; TASK_COUNT],
+    taskIdx: u32,
+    elapsedMillis: u64,
+    stacks: &'static TaskStackStorage<TASK_COUNT, STACK_SIZE>,
 }
 
 impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, STACK_SIZE> {
-
+    /// Creates scheduler metadata bound to dedicated static task-stack storage.
+    ///
+    /// # Safety
+    ///
+    /// `stacks` must be owned exclusively by this `Application` for the full
+    /// lifetime of the application. No second application may use it.
     #[inline]
-    pub fn new() -> Self {
+    pub const unsafe fn new(stacks: &'static TaskStackStorage<TASK_COUNT, STACK_SIZE>) -> Self {
+        assert!(TASK_COUNT > 0);
+        assert!(STACK_SIZE >= INITIAL_FRAME_WORDS + STACK_GUARD_WORDS);
+        assert!((STACK_SIZE & 1) == 0);
+
         Application {
             taskIdx: (TASK_COUNT - 1) as u32,
-            tasks: [Task { 
+            tasks: [Task {
                 sp: 0,
                 status: TaskStatus::PreInit,
                 cycletime: TaskCycleTime::NonCyclic,
@@ -59,9 +54,9 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
                 timestamp_us: 0,
                 next_release_us: 0,
                 missed_releases: 0,
-                stack: Stack::new(),
             }; TASK_COUNT],
             elapsedMillis: 0,
+            stacks,
         }
     }
 
@@ -89,8 +84,9 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
                         need_switch = true;
 
                         if due_count > 1 {
-                            self.tasks[tIdx].missed_releases =
-                                self.tasks[tIdx].missed_releases.saturating_add((due_count - 1) as u32);
+                            self.tasks[tIdx].missed_releases = self.tasks[tIdx]
+                                .missed_releases
+                                .saturating_add((due_count - 1) as u32);
                         }
                     }
 
@@ -98,8 +94,9 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
                     | TaskStatus::Active
                     | TaskStatus::Suspended
                     | TaskStatus::Finished => {
-                        self.tasks[tIdx].missed_releases =
-                            self.tasks[tIdx].missed_releases.saturating_add(due_count as u32);
+                        self.tasks[tIdx].missed_releases = self.tasks[tIdx]
+                            .missed_releases
+                            .saturating_add(due_count as u32);
                     }
 
                     _ => {}
@@ -116,7 +113,10 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
         if next_wakeup_us != u64::MAX {
             let armed = SYSTICK.with(|syst| syst.SetTimerAt(next_wakeup_us));
             if !armed {
-                need_switch = true;
+                // The requested deadline is already due or too close to arm
+                // safely. SetTimerAt installed a long safety interval; pend a
+                // fresh SysTick pass instead of relying on a nanosecond retry.
+                SCB.with(|scb| scb.SetSysTickPending());
             }
         }
 
@@ -127,7 +127,15 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
     }
 
     #[inline]
-    pub fn SetTask(&mut self, tIdx: usize, func: fn(u64), cycletime: TaskCycleTime, role: TaskRole) {
+    pub fn SetTask(
+        &mut self,
+        tIdx: usize,
+        func: fn(u64),
+        cycletime: TaskCycleTime,
+        role: TaskRole,
+    ) {
+        assert!(matches!(self.tasks[tIdx].status, TaskStatus::PreInit));
+
         self.tasks[tIdx].id = tIdx as u32;
         self.tasks[tIdx].cyclic = func;
         self.tasks[tIdx].cycletime = cycletime;
@@ -137,6 +145,17 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
         self.tasks[tIdx].missed_releases = 0;
         self.PrepareTaskStack(tIdx);
         self.tasks[tIdx].status = TaskStatus::Ready;
+    }
+
+    /// Selects the configured last task as the initial background context.
+    pub fn ActivateBackgroundTask(&mut self) -> u32 {
+        let background = TASK_COUNT - 1;
+        assert!(matches!(self.tasks[background].role, TaskRole::Background));
+        assert!(matches!(self.tasks[background].status, TaskStatus::Ready));
+
+        self.tasks[background].status = TaskStatus::Active;
+        self.taskIdx = background as u32;
+        self.tasks[background].sp
     }
 
     #[inline]
@@ -153,60 +172,63 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
     }
 
     #[inline]
-    pub fn ResetTask(&mut self, tIdx: usize) {
+    fn ResetTask(&mut self, tIdx: usize) {
         self.PrepareTaskStack(tIdx);
     }
 
     #[inline]
     fn PrepareTaskStack(&mut self, tIdx: usize) {
-        assert!(STACK_SIZE >= INITIAL_FRAME_WORDS + STACK_GUARD_WORDS);
+        // SAFETY: callers prepare only pre-init, ready, or finished tasks. The
+        // selected PSP stack is therefore not executing while it is rebuilt.
+        let stack = unsafe { self.stacks.stack_ptr(tIdx) };
 
-        // Required for 8-byte stack alignment because each stack entry is 4 bytes.
-        assert!((STACK_SIZE & 1) == 0);
-
-        let task_ptr =
-            ((self.tasks.as_ptr() as usize)
-                + (mem::size_of::<Task<STACK_SIZE>>() * tIdx)) as u32;
-
-        let stack = &mut self.tasks[tIdx].stack.0;
-
-        for word in stack.iter_mut() {
-            *word = STACK_PATTERN;
+        for idx in 0..STACK_SIZE {
+            unsafe { ptr::write(stack.add(idx), STACK_PATTERN) };
         }
 
         for idx in 0..STACK_GUARD_WORDS {
-            stack[idx] = STACK_GUARD;
+            unsafe { ptr::write(stack.add(idx), STACK_GUARD) };
         }
 
         let frame_base = STACK_SIZE - INITIAL_FRAME_WORDS;
 
-        self.tasks[tIdx].sp = (&stack[frame_base] as *const u32) as u32;
+        self.tasks[tIdx].sp = unsafe { stack.add(frame_base) } as u32;
 
         debug_assert_eq!(self.tasks[tIdx].sp & 0x7, 0);
 
         // Software-saved frame.
         // Your context switcher restores this as r8-r11 first, then r4-r7.
-        stack[STACK_SIZE - 16] = STACK_PATTERN; // r8
-        stack[STACK_SIZE - 15] = STACK_PATTERN; // r9
-        stack[STACK_SIZE - 14] = STACK_PATTERN; // r10
-        stack[STACK_SIZE - 13] = STACK_PATTERN; // r11
-        stack[STACK_SIZE - 12] = STACK_PATTERN; // r4
-        stack[STACK_SIZE - 11] = STACK_PATTERN; // r5
-        stack[STACK_SIZE - 10] = STACK_PATTERN; // r6
-        stack[STACK_SIZE - 9]  = STACK_PATTERN; // r7
+        unsafe {
+            ptr::write(stack.add(STACK_SIZE - 16), STACK_PATTERN); // r8
+            ptr::write(stack.add(STACK_SIZE - 15), STACK_PATTERN); // r9
+            ptr::write(stack.add(STACK_SIZE - 14), STACK_PATTERN); // r10
+            ptr::write(stack.add(STACK_SIZE - 13), STACK_PATTERN); // r11
+            ptr::write(stack.add(STACK_SIZE - 12), STACK_PATTERN); // r4
+            ptr::write(stack.add(STACK_SIZE - 11), STACK_PATTERN); // r5
+            ptr::write(stack.add(STACK_SIZE - 10), STACK_PATTERN); // r6
+            ptr::write(stack.add(STACK_SIZE - 9), STACK_PATTERN); // r7
+        }
 
         // Hardware exception frame consumed by Cortex-M exception return.
-        stack[STACK_SIZE - 8] = task_ptr;                              // r0
-        stack[STACK_SIZE - 7] = 0;                                     // r1
-        stack[STACK_SIZE - 6] = 0;                                     // r2
-        stack[STACK_SIZE - 5] = 0;                                     // r3
-        stack[STACK_SIZE - 4] = 0;                                     // r12
-        stack[STACK_SIZE - 3] = (task_return_trap as *const ()) as u32; // lr
-        stack[STACK_SIZE - 2] = ((cyclic::<STACK_SIZE> as *const ()) as u32) | 1; // pc
-        stack[STACK_SIZE - 1] = INITIAL_XPSR;                          // xPSR
+        unsafe {
+            ptr::write(stack.add(STACK_SIZE - 8), tIdx as u32); // r0: task ID
+            ptr::write(stack.add(STACK_SIZE - 7), 0); // r1
+            ptr::write(stack.add(STACK_SIZE - 6), 0); // r2
+            ptr::write(stack.add(STACK_SIZE - 5), 0); // r3
+            ptr::write(stack.add(STACK_SIZE - 4), 0); // r12
+            ptr::write(
+                stack.add(STACK_SIZE - 3),
+                (task_return_trap as *const ()) as u32,
+            ); // lr
+            ptr::write(
+                stack.add(STACK_SIZE - 2),
+                ((cyclic as *const ()) as u32) | 1,
+            ); // pc
+            ptr::write(stack.add(STACK_SIZE - 1), INITIAL_XPSR); // xPSR
+        }
     }
 
-    pub fn GetNextTask(&mut self) -> u32 {
+    fn GetNextTask(&mut self) -> u32 {
         // Run newly released work first.
         for tIdx in 0..self.tasks.len() {
             if matches!(self.tasks[tIdx].status, TaskStatus::Pending) {
@@ -229,8 +251,13 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
     /// have already been saved to `current_sp`.
     ///
     /// Returns the saved stack pointer of the task that shall be restored.
+    ///
+    /// # Safety
+    ///
+    /// `current_sp` must point to the complete software frame of the active
+    /// task, and this must run from PendSV on MSP with interrupts masked.
     #[inline(never)]
-    pub fn PendSVSelectNext(&mut self, current_sp: u32) -> u32 {
+    pub(crate) unsafe fn PendSVSelectNext(&mut self, current_sp: u32) -> u32 {
         let current = self.taskIdx as usize;
 
         // Save outgoing task's PSP.
@@ -239,11 +266,11 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
         match self.tasks[current].status {
             TaskStatus::Active => {
                 self.tasks[current].status = TaskStatus::Suspended;
-            },
+            }
             TaskStatus::Finished => {
                 self.ResetTask(current);
                 self.tasks[current].status = TaskStatus::Ready;
-            },
+            }
             _ => {}
         }
 
@@ -256,13 +283,18 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
     }
 }
 
-
-pub extern "C" fn cyclic<const M: usize>(task: *mut Task<M>) -> ! {
-    let fun: fn(u64) = unsafe { (*task).cyclic };
-    let tstmp = unsafe { (*task).timestamp_us };
-    let taskId = unsafe { (*task).id };
-    let cycletime = unsafe { (*task).cycletime };
-    let role = unsafe { (*task).role };
+/// Executes a task from the synthetic exception frame built by
+/// `PrepareTaskStack`.
+///
+/// # Safety
+///
+/// `taskId` must identify the task whose prepared PSP context entered this
+/// function.
+pub unsafe extern "C" fn cyclic(taskId: u32) -> ! {
+    let (fun, tstmp, cycletime, role) = Os.with(|os| {
+        let task = &os.tasks[taskId as usize];
+        (task.cyclic, task.timestamp_us, task.cycletime, task.role)
+    });
 
     if role.ReportsProgramFlowCheckpoints(cycletime) {
         McuManager::ProgramFlow_ReportTaskStart(taskId);
@@ -271,30 +303,12 @@ pub extern "C" fn cyclic<const M: usize>(task: *mut Task<M>) -> ! {
     if role.ReportsProgramFlowCheckpoints(cycletime) {
         McuManager::ProgramFlow_ReportTaskEnd(taskId);
     }
-    
-    unsafe { 
-        (*task).status = TaskStatus::Finished;
-        asm!("svc 0");
-    }
 
-    loop { }
-}
+    Os.with(|os| os.tasks[taskId as usize].status = TaskStatus::Finished);
 
+    unsafe { asm!("svc 0") };
 
-pub struct Mutex<T> {
-    inner: UnsafeCell<T>,
-}
-
-impl<T> Mutex<T> {
-    /// Creates a new Mutex
-    pub const fn new(value: T) -> Self {
-        Mutex {
-            inner: UnsafeCell::new(value),
-        }
-    }
-
-    pub fn borrow<'st>(&'st self) -> &'st T {
-        unsafe { &*self.inner.get() }
+    loop {
+        core::hint::spin_loop();
     }
 }
-unsafe impl<T> Sync for Mutex<T> where T: Send {}

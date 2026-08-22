@@ -73,3 +73,9 @@ impl<T: Copy, const CAP: usize> Queue<T, CAP> {
         self.len() == CAP
     }
 }
+
+impl<T: Copy, const CAP: usize> Default for Queue<T, CAP> {
+    fn default() -> Self {
+        Self::new()
+    }
+}

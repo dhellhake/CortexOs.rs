@@ -1,48 +1,49 @@
-use core::{
-    arch::global_asm,
-    ops::DerefMut
-};
+use core::arch::global_asm;
 
-use crate::{
-    mcu::{
-        Os,
-        SYSTICK
-    }
-};
+use crate::mcu::{Os, SYSTICK};
 
 #[no_mangle]
+/// Services the SysTick exception installed in the Cortex-M vector table.
+///
+/// # Safety
+///
+/// Must only be entered by the processor as a Cortex-M exception handler.
 pub unsafe extern "C" fn SysTick_Isr() {
     let mut elapsed_us: u64 = 0;
     SYSTICK.with(|syst| {
         elapsed_us = syst.GetElapsedMicroseconds();
-    });    
+    });
 
-    if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
-        os.InvokeSchedule(elapsed_us);
-    }
+    Os.with(|os| os.InvokeSchedule(elapsed_us));
 }
 
 #[no_mangle]
+/// Services the SVC exception used by a task to return to the scheduler.
+///
+/// # Safety
+///
+/// Must only be entered by the processor as a Cortex-M exception handler.
 pub unsafe extern "C" fn SVCall() {
     let mut elapsed_us: u64 = 0;
     SYSTICK.with(|syst| elapsed_us = syst.GetElapsedMicroseconds());
 
-    if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
-        os.InvokeSchedule(elapsed_us);
-    }
+    Os.with(|os| os.InvokeSchedule(elapsed_us));
 }
 
 #[no_mangle]
 #[inline(never)]
+/// Selects a task for the assembly PendSV context switcher.
+///
+/// # Safety
+///
+/// `current_sp` must be the PSP produced by PendSV after saving r4-r11 for the
+/// currently active task.
 pub unsafe extern "C" fn PendSVSelectNext(current_sp: u32) -> u32 {
-    if let Some(ref mut os) = Os.borrow().borrow_mut().deref_mut() {
-        os.PendSVSelectNext(current_sp)
-    } else {
-        current_sp
-    }
+    Os.with(|os| unsafe { os.PendSVSelectNext(current_sp) })
 }
 
-global_asm!(r#"
+global_asm!(
+    r#"
     .section .text.PendSV, "ax", %progbits
     .global PendSV
     .type PendSV, %function
@@ -97,4 +98,5 @@ PendSV:
 
     msr     primask, r2
     bx      lr
-"#);
+"#
+);

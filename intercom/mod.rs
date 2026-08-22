@@ -24,8 +24,6 @@ impl<T: Copy> ReceiveResult<T> {
     }
 }
 
-
-
 #[derive(Copy, Clone, Default)]
 pub struct FanoutReport {
     pub overwritten_mask: u32,

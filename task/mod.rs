@@ -51,7 +51,7 @@ pub struct Task {
     pub status: TaskStatus,
     pub cycletime: TaskCycleTime,
     pub id: u32,
-    pub cyclic: fn(u64),
+    pub cyclic: extern "C" fn(u64),
     pub role: TaskRole,
     pub timestamp_us: u64,
     pub next_release_us: u64,
@@ -109,7 +109,7 @@ impl TaskCycleTime {
     }
 }
 
-pub fn empty(_tstmp: u64) {
+pub extern "C" fn empty(_tstmp: u64) {
     loop {
         core::hint::spin_loop();
     }

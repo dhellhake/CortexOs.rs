@@ -130,7 +130,7 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
     pub fn SetTask(
         &mut self,
         tIdx: usize,
-        func: fn(u64),
+        func: extern "C" fn(u64),
         cycletime: TaskCycleTime,
         role: TaskRole,
     ) {

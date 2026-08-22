@@ -1,8 +1,11 @@
 use core::{arch::asm, ptr};
 
-use task::{empty, Task, TaskCycleTime, TaskRole, TaskStackStorage, TaskStatus};
+use task::{
+    TaskControl, TaskCycleTime, TaskFunction, TaskHandle, TaskRole, TaskStatus,
+    INITIAL_FRAME_WORDS, STACK_GUARD_WORDS,
+};
 
-use crate::mcu::{McuManager, Os, SCB, SYSTICK};
+use crate::mcu::{McuManager, SCB, SCHEDULER, SYSTICK};
 
 pub mod intercom;
 pub mod isr;
@@ -11,8 +14,6 @@ pub mod task;
 const INITIAL_XPSR: u32 = 0x0100_0000;
 const STACK_PATTERN: u32 = 0xE25A_2EA5;
 const STACK_GUARD: u32 = 0xDEAD_BEEF;
-const STACK_GUARD_WORDS: usize = 4;
-const INITIAL_FRAME_WORDS: usize = 16;
 
 #[no_mangle]
 pub extern "C" fn task_return_trap() -> ! {
@@ -22,42 +23,45 @@ pub extern "C" fn task_return_trap() -> ! {
 }
 
 #[repr(C, align(8))]
-pub struct Application<const TASK_COUNT: usize, const STACK_SIZE: usize> {
-    tasks: [Task; TASK_COUNT],
+pub struct Scheduler<const TASK_COUNT: usize> {
+    tasks: [TaskHandle; TASK_COUNT],
     taskIdx: u32,
     elapsedMillis: u64,
-    stacks: &'static TaskStackStorage<TASK_COUNT, STACK_SIZE>,
 }
 
-impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, STACK_SIZE> {
-    /// Creates scheduler metadata bound to dedicated static task-stack storage.
+impl<const TASK_COUNT: usize> Scheduler<TASK_COUNT> {
+    /// Creates a scheduler bound to statically pinned task objects.
     ///
     /// # Safety
     ///
-    /// `stacks` must be owned exclusively by this `Application` for the full
-    /// lifetime of the application. No second application may use it.
+    /// Every handle must identify a distinct task and remain exclusively bound
+    /// to this `Scheduler` for its full lifetime. No task may be registered
+    /// with another scheduler or accessed outside this scheduler's
+    /// interrupt-serialized control path.
     #[inline]
-    pub const unsafe fn new(stacks: &'static TaskStackStorage<TASK_COUNT, STACK_SIZE>) -> Self {
+    pub const unsafe fn new(tasks: [TaskHandle; TASK_COUNT]) -> Self {
         assert!(TASK_COUNT > 0);
-        assert!(STACK_SIZE >= INITIAL_FRAME_WORDS + STACK_GUARD_WORDS);
-        assert!((STACK_SIZE & 1) == 0);
 
-        Application {
+        Scheduler {
             taskIdx: (TASK_COUNT - 1) as u32,
-            tasks: [Task {
-                sp: 0,
-                status: TaskStatus::PreInit,
-                cycletime: TaskCycleTime::NonCyclic,
-                cyclic: empty,
-                role: TaskRole::Background,
-                id: 0,
-                timestamp_us: 0,
-                next_release_us: 0,
-                missed_releases: 0,
-            }; TASK_COUNT],
+            tasks,
             elapsedMillis: 0,
-            stacks,
         }
+    }
+
+    /// Returns an immutable control-block reference tied to this scheduler
+    /// borrow, never to the complete task or its live stack.
+    #[inline]
+    fn control(&self, tIdx: usize) -> &TaskControl {
+        let control = self.tasks[tIdx].control_ptr();
+        unsafe { &*control }
+    }
+
+    /// Returns the uniquely borrowed control block for one owned task.
+    #[inline]
+    fn control_mut(&mut self, tIdx: usize) -> &mut TaskControl {
+        let control = self.tasks[tIdx].control_ptr();
+        unsafe { &mut *control }
     }
 
     pub fn InvokeSchedule(&mut self, now_us: u64) {
@@ -65,49 +69,59 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
         let mut next_wakeup_us = u64::MAX;
 
         for tIdx in 0..self.tasks.len() {
-            let Some(period_us) = self.tasks[tIdx].cycletime.period_us() else {
+            let Some(period_us) = self.control(tIdx).cycletime.period_us() else {
                 continue;
             };
 
-            if now_us >= self.tasks[tIdx].next_release_us {
-                let release_us = self.tasks[tIdx].next_release_us;
-                let due_count = ((now_us - release_us) / period_us) + 1;
+            let mut prepare_stack = false;
 
-                self.tasks[tIdx].next_release_us =
-                    release_us.saturating_add(due_count.saturating_mul(period_us));
+            {
+                let task = self.control_mut(tIdx);
 
-                match self.tasks[tIdx].status {
-                    TaskStatus::Ready => {
-                        self.tasks[tIdx].timestamp_us = release_us;
-                        self.PrepareTaskStack(tIdx);
-                        self.tasks[tIdx].status = TaskStatus::Pending;
-                        need_switch = true;
+                if now_us >= task.next_release_us {
+                    let release_us = task.next_release_us;
+                    let due_count = ((now_us - release_us) / period_us) + 1;
 
-                        if due_count > 1 {
-                            self.tasks[tIdx].missed_releases = self.tasks[tIdx]
-                                .missed_releases
-                                .saturating_add((due_count - 1) as u32);
+                    task.next_release_us =
+                        release_us.saturating_add(due_count.saturating_mul(period_us));
+
+                    match task.status {
+                        TaskStatus::Ready => {
+                            task.timestamp_us = release_us;
+                            prepare_stack = true;
+
+                            if due_count > 1 {
+                                task.missed_releases =
+                                    task.missed_releases.saturating_add((due_count - 1) as u32);
+                            }
                         }
-                    }
 
-                    TaskStatus::Pending
-                    | TaskStatus::Active
-                    | TaskStatus::Suspended
-                    | TaskStatus::Finished => {
-                        self.tasks[tIdx].missed_releases = self.tasks[tIdx]
-                            .missed_releases
-                            .saturating_add(due_count as u32);
-                    }
+                        TaskStatus::Pending
+                        | TaskStatus::Active
+                        | TaskStatus::Suspended
+                        | TaskStatus::Finished => {
+                            task.missed_releases =
+                                task.missed_releases.saturating_add(due_count as u32);
+                        }
 
-                    _ => {}
+                        _ => {}
+                    }
                 }
             }
 
-            if matches!(self.tasks[tIdx].status, TaskStatus::Pending) {
+            if prepare_stack {
+                self.PrepareTaskStack(tIdx);
+                self.control_mut(tIdx).status = TaskStatus::Pending;
                 need_switch = true;
             }
 
-            next_wakeup_us = next_wakeup_us.min(self.tasks[tIdx].next_release_us);
+            let task = self.control(tIdx);
+
+            if matches!(task.status, TaskStatus::Pending) {
+                need_switch = true;
+            }
+
+            next_wakeup_us = next_wakeup_us.min(task.next_release_us);
         }
 
         if next_wakeup_us != u64::MAX {
@@ -121,7 +135,7 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
         }
 
         let current = self.taskIdx as usize;
-        if need_switch || matches!(self.tasks[current].status, TaskStatus::Finished) {
+        if need_switch || matches!(self.control(current).status, TaskStatus::Finished) {
             SCB.with(|scb| scb.SetPendSV());
         }
     }
@@ -130,37 +144,45 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
     pub fn SetTask(
         &mut self,
         tIdx: usize,
-        func: extern "C" fn(u64),
+        func: TaskFunction,
         cycletime: TaskCycleTime,
         role: TaskRole,
     ) {
-        assert!(matches!(self.tasks[tIdx].status, TaskStatus::PreInit));
+        assert!(matches!(self.control(tIdx).status, TaskStatus::PreInit));
 
-        self.tasks[tIdx].id = tIdx as u32;
-        self.tasks[tIdx].cyclic = func;
-        self.tasks[tIdx].cycletime = cycletime;
-        self.tasks[tIdx].role = role;
-        self.tasks[tIdx].timestamp_us = 0;
-        self.tasks[tIdx].next_release_us = cycletime.period_us().unwrap_or(0);
-        self.tasks[tIdx].missed_releases = 0;
+        {
+            let task = self.control_mut(tIdx);
+            task.id = tIdx as u32;
+            task.cyclic = Some(func);
+            task.cycletime = cycletime;
+            task.role = role;
+            task.timestamp_us = 0;
+            task.next_release_us = cycletime.period_us().unwrap_or(0);
+            task.missed_releases = 0;
+        }
+
         self.PrepareTaskStack(tIdx);
-        self.tasks[tIdx].status = TaskStatus::Ready;
+        self.control_mut(tIdx).status = TaskStatus::Ready;
     }
 
     /// Selects the configured last task as the initial background context.
     pub fn ActivateBackgroundTask(&mut self) -> u32 {
         let background = TASK_COUNT - 1;
-        assert!(matches!(self.tasks[background].role, TaskRole::Background));
-        assert!(matches!(self.tasks[background].status, TaskStatus::Ready));
+        assert!(matches!(
+            self.control(background).role,
+            TaskRole::Background
+        ));
+        assert!(matches!(self.control(background).status, TaskStatus::Ready));
 
-        self.tasks[background].status = TaskStatus::Active;
+        self.control_mut(background).status = TaskStatus::Active;
         self.taskIdx = background as u32;
-        self.tasks[background].sp
+        self.control(background).sp
     }
 
     #[inline]
     pub fn SetCyclicReleaseBase(&mut self, base_us: u64) {
-        for task in self.tasks.iter_mut() {
+        for tIdx in 0..self.tasks.len() {
+            let task = self.control_mut(tIdx);
             let Some(period_us) = task.cycletime.period_us() else {
                 continue;
             };
@@ -180,9 +202,16 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
     fn PrepareTaskStack(&mut self, tIdx: usize) {
         // SAFETY: callers prepare only pre-init, ready, or finished tasks. The
         // selected PSP stack is therefore not executing while it is rebuilt.
-        let stack = unsafe { self.stacks.stack_ptr(tIdx) };
+        debug_assert!(matches!(
+            self.control(tIdx).status,
+            TaskStatus::PreInit | TaskStatus::Ready | TaskStatus::Finished
+        ));
 
-        for idx in 0..STACK_SIZE {
+        let handle = self.tasks[tIdx];
+        let stack = handle.stack_ptr();
+        let stack_size = handle.stack_size_words();
+
+        for idx in 0..stack_size {
             unsafe { ptr::write(stack.add(idx), STACK_PATTERN) };
         }
 
@@ -190,55 +219,56 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
             unsafe { ptr::write(stack.add(idx), STACK_GUARD) };
         }
 
-        let frame_base = STACK_SIZE - INITIAL_FRAME_WORDS;
+        let frame_base = stack_size - INITIAL_FRAME_WORDS;
+        let sp = unsafe { stack.add(frame_base) } as u32;
 
-        self.tasks[tIdx].sp = unsafe { stack.add(frame_base) } as u32;
-
-        debug_assert_eq!(self.tasks[tIdx].sp & 0x7, 0);
+        debug_assert_eq!(sp & 0x7, 0);
 
         // Software-saved frame.
         // Your context switcher restores this as r8-r11 first, then r4-r7.
         unsafe {
-            ptr::write(stack.add(STACK_SIZE - 16), STACK_PATTERN); // r8
-            ptr::write(stack.add(STACK_SIZE - 15), STACK_PATTERN); // r9
-            ptr::write(stack.add(STACK_SIZE - 14), STACK_PATTERN); // r10
-            ptr::write(stack.add(STACK_SIZE - 13), STACK_PATTERN); // r11
-            ptr::write(stack.add(STACK_SIZE - 12), STACK_PATTERN); // r4
-            ptr::write(stack.add(STACK_SIZE - 11), STACK_PATTERN); // r5
-            ptr::write(stack.add(STACK_SIZE - 10), STACK_PATTERN); // r6
-            ptr::write(stack.add(STACK_SIZE - 9), STACK_PATTERN); // r7
+            ptr::write(stack.add(stack_size - 16), STACK_PATTERN); // r8
+            ptr::write(stack.add(stack_size - 15), STACK_PATTERN); // r9
+            ptr::write(stack.add(stack_size - 14), STACK_PATTERN); // r10
+            ptr::write(stack.add(stack_size - 13), STACK_PATTERN); // r11
+            ptr::write(stack.add(stack_size - 12), STACK_PATTERN); // r4
+            ptr::write(stack.add(stack_size - 11), STACK_PATTERN); // r5
+            ptr::write(stack.add(stack_size - 10), STACK_PATTERN); // r6
+            ptr::write(stack.add(stack_size - 9), STACK_PATTERN); // r7
         }
 
         // Hardware exception frame consumed by Cortex-M exception return.
         unsafe {
-            ptr::write(stack.add(STACK_SIZE - 8), tIdx as u32); // r0: task ID
-            ptr::write(stack.add(STACK_SIZE - 7), 0); // r1
-            ptr::write(stack.add(STACK_SIZE - 6), 0); // r2
-            ptr::write(stack.add(STACK_SIZE - 5), 0); // r3
-            ptr::write(stack.add(STACK_SIZE - 4), 0); // r12
+            ptr::write(stack.add(stack_size - 8), tIdx as u32); // r0: task ID
+            ptr::write(stack.add(stack_size - 7), 0); // r1
+            ptr::write(stack.add(stack_size - 6), 0); // r2
+            ptr::write(stack.add(stack_size - 5), 0); // r3
+            ptr::write(stack.add(stack_size - 4), 0); // r12
             ptr::write(
-                stack.add(STACK_SIZE - 3),
+                stack.add(stack_size - 3),
                 (task_return_trap as *const ()) as u32,
             ); // lr
             ptr::write(
-                stack.add(STACK_SIZE - 2),
+                stack.add(stack_size - 2),
                 ((cyclic as *const ()) as u32) | 1,
             ); // pc
-            ptr::write(stack.add(STACK_SIZE - 1), INITIAL_XPSR); // xPSR
+            ptr::write(stack.add(stack_size - 1), INITIAL_XPSR); // xPSR
         }
+
+        self.control_mut(tIdx).sp = sp;
     }
 
     fn GetNextTask(&mut self) -> u32 {
         // Run newly released work first.
         for tIdx in 0..self.tasks.len() {
-            if matches!(self.tasks[tIdx].status, TaskStatus::Pending) {
+            if matches!(self.control(tIdx).status, TaskStatus::Pending) {
                 return tIdx as u32;
             }
         }
 
         // Then resume a preempted task, including the idle/background task.
         for tIdx in 0..self.tasks.len() {
-            if matches!(self.tasks[tIdx].status, TaskStatus::Suspended) {
+            if matches!(self.control(tIdx).status, TaskStatus::Suspended) {
                 return tIdx as u32;
             }
         }
@@ -261,25 +291,25 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
         let current = self.taskIdx as usize;
 
         // Save outgoing task's PSP.
-        self.tasks[current].sp = current_sp;
+        self.control_mut(current).sp = current_sp;
 
-        match self.tasks[current].status {
+        match self.control(current).status {
             TaskStatus::Active => {
-                self.tasks[current].status = TaskStatus::Suspended;
+                self.control_mut(current).status = TaskStatus::Suspended;
             }
             TaskStatus::Finished => {
                 self.ResetTask(current);
-                self.tasks[current].status = TaskStatus::Ready;
+                self.control_mut(current).status = TaskStatus::Ready;
             }
             _ => {}
         }
 
         let next = self.GetNextTask() as usize;
 
-        self.tasks[next].status = TaskStatus::Active;
+        self.control_mut(next).status = TaskStatus::Active;
         self.taskIdx = next as u32;
 
-        self.tasks[next].sp
+        self.control(next).sp
     }
 }
 
@@ -291,9 +321,14 @@ impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Application<TASK_COUNT, S
 /// `taskId` must identify the task whose prepared PSP context entered this
 /// function.
 pub unsafe extern "C" fn cyclic(taskId: u32) -> ! {
-    let (fun, tstmp, cycletime, role) = Os.with(|os| {
-        let task = &os.tasks[taskId as usize];
-        (task.cyclic, task.timestamp_us, task.cycletime, task.role)
+    let (fun, tstmp, cycletime, role) = SCHEDULER.with(|scheduler| {
+        let task = scheduler.control(taskId as usize);
+        let fun = match task.cyclic {
+            Some(fun) => fun,
+            None => task_return_trap(),
+        };
+
+        (fun, task.timestamp_us, task.cycletime, task.role)
     });
 
     if role.ReportsProgramFlowCheckpoints(cycletime) {
@@ -304,7 +339,9 @@ pub unsafe extern "C" fn cyclic(taskId: u32) -> ! {
         McuManager::ProgramFlow_ReportTaskEnd(taskId);
     }
 
-    Os.with(|os| os.tasks[taskId as usize].status = TaskStatus::Finished);
+    SCHEDULER.with(|scheduler| {
+        scheduler.control_mut(taskId as usize).status = TaskStatus::Finished;
+    });
 
     unsafe { asm!("svc 0") };
 

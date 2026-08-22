@@ -1,6 +1,6 @@
 use core::arch::global_asm;
 
-use crate::mcu::{Os, SYSTICK};
+use crate::mcu::{SCHEDULER, SYSTICK};
 
 #[no_mangle]
 /// Services the SysTick exception installed in the Cortex-M vector table.
@@ -14,7 +14,7 @@ pub unsafe extern "C" fn SysTick_Isr() {
         elapsed_us = syst.GetElapsedMicroseconds();
     });
 
-    Os.with(|os| os.InvokeSchedule(elapsed_us));
+    SCHEDULER.with(|scheduler| scheduler.InvokeSchedule(elapsed_us));
 }
 
 #[no_mangle]
@@ -27,7 +27,7 @@ pub unsafe extern "C" fn SVCall() {
     let mut elapsed_us: u64 = 0;
     SYSTICK.with(|syst| elapsed_us = syst.GetElapsedMicroseconds());
 
-    Os.with(|os| os.InvokeSchedule(elapsed_us));
+    SCHEDULER.with(|scheduler| scheduler.InvokeSchedule(elapsed_us));
 }
 
 #[no_mangle]
@@ -39,7 +39,7 @@ pub unsafe extern "C" fn SVCall() {
 /// `current_sp` must be the PSP produced by PendSV after saving r4-r11 for the
 /// currently active task.
 pub unsafe extern "C" fn PendSVSelectNext(current_sp: u32) -> u32 {
-    Os.with(|os| unsafe { os.PendSVSelectNext(current_sp) })
+    SCHEDULER.with(|scheduler| unsafe { scheduler.PendSVSelectNext(current_sp) })
 }
 
 global_asm!(

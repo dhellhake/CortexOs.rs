@@ -1,63 +1,124 @@
-use core::cell::UnsafeCell;
+use core::{cell::UnsafeCell, marker::PhantomPinned};
 
-/// Stack memory lives outside `Application`, so an interrupt-time mutable
-/// borrow of scheduler metadata never encompasses a task's live PSP frames.
-#[repr(align(8))]
-pub struct TaskStackStorage<const TASK_COUNT: usize, const STACK_SIZE: usize> {
-    words: UnsafeCell<[[u32; STACK_SIZE]; TASK_COUNT]>,
+pub(super) const INITIAL_FRAME_WORDS: usize = 16;
+pub(super) const STACK_GUARD_WORDS: usize = 4;
+
+pub type TaskFunction = extern "C" fn(u64);
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub(super) struct TaskControl {
+    pub(super) sp: u32,
+    pub(super) status: TaskStatus,
+    pub(super) cycletime: TaskCycleTime,
+    pub(super) id: u32,
+    pub(super) cyclic: Option<TaskFunction>,
+    pub(super) role: TaskRole,
+    pub(super) timestamp_us: u64,
+    pub(super) next_release_us: u64,
+    pub(super) missed_releases: u32,
 }
 
-impl<const TASK_COUNT: usize, const STACK_SIZE: usize> TaskStackStorage<TASK_COUNT, STACK_SIZE> {
+impl TaskControl {
+    const fn new() -> Self {
+        Self {
+            sp: 0,
+            status: TaskStatus::PreInit,
+            cycletime: TaskCycleTime::NonCyclic,
+            id: 0,
+            cyclic: None,
+            role: TaskRole::Supervised,
+            timestamp_us: 0,
+            next_release_us: 0,
+            missed_releases: 0,
+        }
+    }
+}
+
+/// A statically pinned scheduler task that owns its stack and control state.
+///
+/// Both mutable regions use `UnsafeCell`: the processor may actively use
+/// `stack` through PSP while the scheduler updates the disjoint `control`
+/// block through a scheduler-held handle. No API creates `&mut Task` or a
+/// reference to the stack storage.
+#[repr(C, align(8))]
+pub struct Task<const STACK_SIZE: usize> {
+    // Keep the stack first so the task address is also its aligned stack base.
+    stack: UnsafeCell<[u32; STACK_SIZE]>,
+    control: UnsafeCell<TaskControl>,
+    _pin: PhantomPinned,
+}
+
+impl<const STACK_SIZE: usize> Task<STACK_SIZE> {
     #[inline]
     pub const fn new() -> Self {
+        assert!(STACK_SIZE >= INITIAL_FRAME_WORDS + STACK_GUARD_WORDS);
+        assert!((STACK_SIZE & 1) == 0);
+
         Self {
-            words: UnsafeCell::new([[0; STACK_SIZE]; TASK_COUNT]),
+            stack: UnsafeCell::new([0; STACK_SIZE]),
+            control: UnsafeCell::new(TaskControl::new()),
+            _pin: PhantomPinned,
         }
     }
 
-    /// Returns one stack as a raw pointer without creating a Rust reference to
-    /// memory that can later become the processor's active stack.
+    /// Creates an inert handle to this statically allocated task.
     ///
-    /// # Safety
-    ///
-    /// `task_idx` must be in range, and the caller must ensure that the chosen
-    /// stack is not executing while it is written.
+    /// The `'static` receiver makes the task's address stable before its raw
+    /// stack and control pointers can be registered with a `Scheduler`.
     #[inline]
-    pub(crate) unsafe fn stack_ptr(&self, task_idx: usize) -> *mut u32 {
-        debug_assert!(task_idx < TASK_COUNT);
-        unsafe { self.words.get().cast::<u32>().add(task_idx * STACK_SIZE) }
+    pub const fn handle(&'static self) -> TaskHandle {
+        TaskHandle {
+            stack: self.stack.get().cast::<u32>(),
+            stack_size_words: STACK_SIZE,
+            control: self.control.get(),
+        }
     }
 }
 
-impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Default
-    for TaskStackStorage<TASK_COUNT, STACK_SIZE>
-{
+impl<const STACK_SIZE: usize> Default for Task<STACK_SIZE> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-// Mutation is available only through the unsafe raw-stack boundary above.
-// Live task stack memory is never exposed as a Rust reference.
-unsafe impl<const TASK_COUNT: usize, const STACK_SIZE: usize> Sync
-    for TaskStackStorage<TASK_COUNT, STACK_SIZE>
-{
+// All mutation is behind private UnsafeCell/raw-pointer boundaries. The owning
+// Scheduler serializes control access with PRIMASK, and stack memory is
+// written only while that task is inactive. NMI must not access scheduler data.
+unsafe impl<const STACK_SIZE: usize> Sync for Task<STACK_SIZE> {}
+
+/// Type-erased handle used by `Scheduler`, allowing each task to select its
+/// own compile-time stack size.
+#[derive(Copy, Clone)]
+pub struct TaskHandle {
+    stack: *mut u32,
+    stack_size_words: usize,
+    control: *mut TaskControl,
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
-pub struct Task {
-    pub sp: u32,
-    pub status: TaskStatus,
-    pub cycletime: TaskCycleTime,
-    pub id: u32,
-    pub cyclic: extern "C" fn(u64),
-    pub role: TaskRole,
-    pub timestamp_us: u64,
-    pub next_release_us: u64,
-    pub missed_releases: u32,
+impl TaskHandle {
+    #[inline]
+    pub(super) const fn stack_ptr(&self) -> *mut u32 {
+        self.stack
+    }
+
+    #[inline]
+    pub(super) const fn stack_size_words(&self) -> usize {
+        self.stack_size_words
+    }
+
+    #[inline]
+    pub(super) const fn control_ptr(&self) -> *mut TaskControl {
+        self.control
+    }
 }
 
+// TaskHandle exposes no public pointer access. Dereferencing is confined to the
+// uniquely owning Scheduler established by its unsafe constructor contract.
+unsafe impl Send for TaskHandle {}
+unsafe impl Sync for TaskHandle {}
+
+#[repr(u8)]
 #[derive(Copy, Clone, Debug)]
 pub enum TaskStatus {
     PreInit = 0,
@@ -69,6 +130,7 @@ pub enum TaskStatus {
     Unknown = 255,
 }
 
+#[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TaskRole {
     Supervised = 0,
@@ -89,6 +151,7 @@ impl TaskRole {
     }
 }
 
+#[repr(u8)]
 #[derive(Copy, Clone, Debug)]
 pub enum TaskCycleTime {
     NonCyclic = 0,
@@ -106,11 +169,5 @@ impl TaskCycleTime {
             TaskCycleTime::NonCyclic | TaskCycleTime::Unknown => None,
             _ => Some(self as u64 * 1000),
         }
-    }
-}
-
-pub extern "C" fn empty(_tstmp: u64) {
-    loop {
-        core::hint::spin_loop();
     }
 }

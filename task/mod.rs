@@ -151,8 +151,29 @@ impl TaskRole {
     }
 }
 
-#[repr(u8)]
+/// Immutable task metadata exposed without granting access to the task's
+/// control block or live stack.
+#[repr(C)]
 #[derive(Copy, Clone, Debug)]
+pub struct TaskConfiguration {
+    pub id: u32,
+    pub cycletime: TaskCycleTime,
+    pub role: TaskRole,
+}
+
+impl TaskConfiguration {
+    #[inline]
+    pub const fn new(id: u32, cycletime: TaskCycleTime, role: TaskRole) -> Self {
+        Self {
+            id,
+            cycletime,
+            role,
+        }
+    }
+}
+
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TaskCycleTime {
     NonCyclic = 0,
     _5MS = 5,

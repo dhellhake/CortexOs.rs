@@ -1,7 +1,7 @@
 use core::{arch::asm, ptr};
 
 use task::{
-    TaskControl, TaskCycleTime, TaskFunction, TaskHandle, TaskRole, TaskStatus,
+    TaskConfiguration, TaskControl, TaskCycleTime, TaskFunction, TaskHandle, TaskRole, TaskStatus,
     INITIAL_FRAME_WORDS, STACK_GUARD_WORDS,
 };
 
@@ -62,6 +62,26 @@ impl<const TASK_COUNT: usize> Scheduler<TASK_COUNT> {
     fn control_mut(&mut self, tIdx: usize) -> &mut TaskControl {
         let control = self.tasks[tIdx].control_ptr();
         unsafe { &mut *control }
+    }
+
+    /// Copies the configured task metadata needed by project-level monitors.
+    /// Stack and mutable scheduling state remain encapsulated by Scheduler.
+    #[inline]
+    pub fn GetTaskConfiguration(&self, tIdx: usize) -> TaskConfiguration {
+        let task = self.control(tIdx);
+        TaskConfiguration::new(task.id, task.cycletime, task.role)
+    }
+
+    #[inline]
+    pub fn GetTaskConfigurations(&self) -> [TaskConfiguration; TASK_COUNT] {
+        let first = self.GetTaskConfiguration(0);
+        let mut configurations = [first; TASK_COUNT];
+
+        for (tIdx, configuration) in configurations.iter_mut().enumerate() {
+            *configuration = self.GetTaskConfiguration(tIdx);
+        }
+
+        configurations
     }
 
     pub fn InvokeSchedule(&mut self, now_us: u64) {

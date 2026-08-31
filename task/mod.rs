@@ -176,6 +176,7 @@ impl TaskConfiguration {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TaskCycleTime {
     NonCyclic = 0,
+    _1MS = 1,
     _5MS = 5,
     _10MS = 10,
     _20MS = 20,

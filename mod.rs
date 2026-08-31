@@ -93,8 +93,6 @@ impl<const TASK_COUNT: usize> Scheduler<TASK_COUNT> {
                 continue;
             };
 
-            let mut prepare_stack = false;
-
             {
                 let task = self.control_mut(tIdx);
 
@@ -108,7 +106,8 @@ impl<const TASK_COUNT: usize> Scheduler<TASK_COUNT> {
                     match task.status {
                         TaskStatus::Ready => {
                             task.timestamp_us = release_us;
-                            prepare_stack = true;
+                            task.status = TaskStatus::Pending;
+                            need_switch = true;
 
                             if due_count > 1 {
                                 task.missed_releases =
@@ -127,12 +126,6 @@ impl<const TASK_COUNT: usize> Scheduler<TASK_COUNT> {
                         _ => {}
                     }
                 }
-            }
-
-            if prepare_stack {
-                self.PrepareTaskStack(tIdx);
-                self.control_mut(tIdx).status = TaskStatus::Pending;
-                need_switch = true;
             }
 
             let task = self.control(tIdx);
@@ -181,7 +174,7 @@ impl<const TASK_COUNT: usize> Scheduler<TASK_COUNT> {
             task.missed_releases = 0;
         }
 
-        self.PrepareTaskStack(tIdx);
+        self.InitializeTaskStack(tIdx);
         self.control_mut(tIdx).status = TaskStatus::Ready;
     }
 
@@ -214,18 +207,12 @@ impl<const TASK_COUNT: usize> Scheduler<TASK_COUNT> {
     }
 
     #[inline]
-    fn ResetTask(&mut self, tIdx: usize) {
-        self.PrepareTaskStack(tIdx);
-    }
-
-    #[inline]
-    fn PrepareTaskStack(&mut self, tIdx: usize) {
-        // SAFETY: callers prepare only pre-init, ready, or finished tasks. The
-        // selected PSP stack is therefore not executing while it is rebuilt.
-        debug_assert!(matches!(
-            self.control(tIdx).status,
-            TaskStatus::PreInit | TaskStatus::Ready | TaskStatus::Finished
-        ));
+    fn InitializeTaskStack(&mut self, tIdx: usize) {
+        // Initialize the lifetime watermark and guard exactly once, before the
+        // task can execute. Rewriting these on every release would both add
+        // scheduler latency and erase evidence of earlier maximum stack use or
+        // guard corruption.
+        debug_assert!(matches!(self.control(tIdx).status, TaskStatus::PreInit));
 
         let handle = self.tasks[tIdx];
         let stack = handle.stack_ptr();
@@ -238,6 +225,24 @@ impl<const TASK_COUNT: usize> Scheduler<TASK_COUNT> {
         for idx in 0..STACK_GUARD_WORDS {
             unsafe { ptr::write(stack.add(idx), STACK_GUARD) };
         }
+
+        self.ResetTask(tIdx);
+    }
+
+    #[inline]
+    fn ResetTask(&mut self, tIdx: usize) {
+        // SAFETY: reset runs only before first activation or after the task has
+        // finished. Its PSP is therefore inactive while the synthetic context
+        // frame is rebuilt. The rest of the task-owned stack, including its
+        // lifetime watermark and guard, deliberately remains untouched.
+        debug_assert!(matches!(
+            self.control(tIdx).status,
+            TaskStatus::PreInit | TaskStatus::Finished
+        ));
+
+        let handle = self.tasks[tIdx];
+        let stack = handle.stack_ptr();
+        let stack_size = handle.stack_size_words();
 
         let frame_base = stack_size - INITIAL_FRAME_WORDS;
         let sp = unsafe { stack.add(frame_base) } as u32;
@@ -278,6 +283,17 @@ impl<const TASK_COUNT: usize> Scheduler<TASK_COUNT> {
         self.control_mut(tIdx).sp = sp;
     }
 
+    #[inline]
+    fn TaskStackGuardIntact(&self, tIdx: usize) -> bool {
+        let stack = self.tasks[tIdx].stack_ptr();
+        for idx in 0..STACK_GUARD_WORDS {
+            if unsafe { ptr::read_volatile(stack.add(idx)) } != STACK_GUARD {
+                return false;
+            }
+        }
+        true
+    }
+
     fn GetNextTask(&mut self) -> u32 {
         // Run newly released work first.
         for tIdx in 0..self.tasks.len() {
@@ -313,6 +329,14 @@ impl<const TASK_COUNT: usize> Scheduler<TASK_COUNT> {
         // Save outgoing task's PSP.
         self.control_mut(current).sp = current_sp;
 
+        // The outgoing PSP is inactive from this point. Check the lifetime
+        // guard before any corrupted task is rearmed or another context is
+        // restored. Trapping in PendSV intentionally withholds watchdog
+        // service, producing the scheduler-supervision reset response.
+        if !self.TaskStackGuardIntact(current) {
+            task_return_trap();
+        }
+
         match self.control(current).status {
             TaskStatus::Active => {
                 self.control_mut(current).status = TaskStatus::Suspended;
@@ -326,6 +350,10 @@ impl<const TASK_COUNT: usize> Scheduler<TASK_COUNT> {
 
         let next = self.GetNextTask() as usize;
 
+        if !self.TaskStackGuardIntact(next) {
+            task_return_trap();
+        }
+
         self.control_mut(next).status = TaskStatus::Active;
         self.taskIdx = next as u32;
 
@@ -333,8 +361,8 @@ impl<const TASK_COUNT: usize> Scheduler<TASK_COUNT> {
     }
 }
 
-/// Executes a task from the synthetic exception frame built by
-/// `PrepareTaskStack`.
+/// Executes a task from the synthetic exception frame initialized and rearmed
+/// by its owning `Scheduler`.
 ///
 /// # Safety
 ///
